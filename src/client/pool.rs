@@ -794,11 +794,13 @@ impl<T> WeakOpt<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::task::Poll;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{self, Poll};
     use std::time::Duration;
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
-    use crate::common::{exec::Exec, task, Future, Pin};
+    use crate::common::exec::Exec;
 
     /// Test unique reservations.
     #[derive(Debug, PartialEq, Eq)]
