@@ -62,5 +62,15 @@ impl<B: Buf> Buf for AlertOnEos<B> {
 
 #[cfg(test)]
 mod tests {
+    use crate::common::buf::AlertOnEos;
+    use hyper::body::Bytes;
+    use std::time::Duration;
 
+    #[tokio::test]
+    async fn test_get_notified() {
+        let buf = Bytes::from_static(b"");
+        let (_buf, signaler) = AlertOnEos::new(buf);
+        let result = tokio::time::timeout(Duration::from_secs(1), signaler.wait_till_eos()).await;
+        assert_eq!(result, Ok(()));
+    }
 }
