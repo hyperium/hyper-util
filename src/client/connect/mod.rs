@@ -169,7 +169,7 @@ impl Connected {
     #[cfg(feature = "http2")]
     pub(super) fn clone(&self) -> Connected {
         Connected {
-            alpn: self.alpn.clone(),
+            alpn: self.alpn,
             is_proxied: self.is_proxied,
             extra: self.extra.clone(),
         }
