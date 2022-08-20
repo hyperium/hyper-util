@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
-/// Signaler returned as part of `NotifyOnEos::new` that can be polled to receive information,
+/// Signaler returned as part of [`NotifyOnEos::new`] that can be polled to receive information,
 /// when the buffer gets advanced to the end.
 // Cannot be Clone due to usage of `Notify::notify_one` in `NotifyOnEos::advance`,
 // revisit once `Notify::notify_all` stabilizes.
@@ -17,11 +17,11 @@ impl EosSignaler {
     }
 }
 
-/// Wrapper for `bytes::Buf` that returns a `EosSignaler` that can be polled to receive information,
+/// Wrapper for [`Buf`] that returns an [`EosSignaler`] that can be polled to receive information,
 /// when the buffer gets advanced to the end.
 ///
-/// NOTE: For the notification to work, caller must ensure that `Buf::advance` gets called
-/// enough times to advance to the end of the buffer (so that `Buf::has_remaining` afterwards returns `0`).
+/// NOTE: For the notification to work, caller must ensure that [`Buf::advance`] gets called
+/// enough times to advance to the end of the buffer (so that [`Buf::has_remaining`] afterwards returns `0`).
 pub struct NotifyOnEos<B> {
     inner: B,
     notifier: Arc<Notify>,
