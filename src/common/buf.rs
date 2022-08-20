@@ -72,6 +72,7 @@ mod tests {
     use hyper::body::{Buf, Bytes};
     use std::time::Duration;
 
+    #[cfg(not(miri))]
     #[tokio::test]
     async fn test_get_notified_immediately() {
         let buf = Bytes::from_static(b"abc");
@@ -80,6 +81,7 @@ mod tests {
         signaler.wait_till_eos().await;
     }
 
+    #[cfg(not(miri))]
     #[tokio::test]
     async fn test_get_notified_after_1ms() {
         let buf = Bytes::from_static(b"abc");
