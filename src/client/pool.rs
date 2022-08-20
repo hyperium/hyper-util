@@ -935,7 +935,6 @@ mod tests {
     #[cfg(feature = "runtime")]
     #[tokio::test]
     async fn test_pool_timer_removes_expired() {
-        let _ = pretty_env_logger::try_init();
         tokio::time::pause();
 
         let pool = Pool::new(
