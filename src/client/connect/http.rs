@@ -549,10 +549,10 @@ fn bind_local_address(
 ) -> io::Result<()> {
     match (*dst_addr, local_addr_ipv4, local_addr_ipv6) {
         (SocketAddr::V4(_), Some(addr), _) => {
-            socket.bind(&SocketAddr::new(addr.clone().into(), 0).into())?;
+            socket.bind(&SocketAddr::new((*addr).into(), 0).into())?;
         }
         (SocketAddr::V6(_), _, Some(addr)) => {
-            socket.bind(&SocketAddr::new(addr.clone().into(), 0).into())?;
+            socket.bind(&SocketAddr::new((*addr).into(), 0).into())?;
         }
         _ => {
             if cfg!(windows) {
