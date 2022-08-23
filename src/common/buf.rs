@@ -1,5 +1,4 @@
 use hyper::body::Buf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -24,13 +23,7 @@ impl EosSignaler {
 /// enough times to advance to the end of the buffer (so that [`Buf::has_remaining`] afterwards returns `0`).
 pub struct NotifyOnEos<B> {
     inner: B,
-    notifier: Arc<Notify>,
-    // It'd be better if we consumed the signaler, making it inaccessible after notification.
-    // Unfortunately, that would require something like AtomicOption.
-    // arc_swap::ArcSwapOption was tried, but it can only return an Arc, and the pointed-to value cannot be consumed.
-    // One could write an AtomicOption type (like this https://docs.rs/atomic-option/0.1.2/atomic_option/),
-    // but it requires both unsafe and heap allocation, which is not worth it.
-    has_already_signaled: AtomicBool,
+    notifier: Option<Arc<Notify>>,
 }
 
 impl<B> NotifyOnEos<B> {
@@ -38,8 +31,7 @@ impl<B> NotifyOnEos<B> {
         let notifier = Arc::new(Notify::new());
         let this = Self {
             inner,
-            notifier: notifier.clone(),
-            has_already_signaled: AtomicBool::new(false),
+            notifier: Some(notifier.clone()),
         };
         let signal = EosSignaler { notifier };
         (this, signal)
@@ -57,11 +49,14 @@ impl<B: Buf> Buf for NotifyOnEos<B> {
 
     fn advance(&mut self, cnt: usize) {
         self.inner.advance(cnt);
-        if !self.inner.has_remaining() && !self.has_already_signaled.swap(true, Ordering::AcqRel) {
-            // tokio::sync::Notify has private method `notify_all` that, once stabilized,
-            // would allow us to make `EosSignaler` Cloneable with better ergonomics
-            // to await EOS from multiple places.
-            self.notifier.notify_one();
+        if !self.inner.has_remaining() {
+            // consume the notifier to ensure we only notify once
+            if let Some(notifier) = self.notifier.take() {
+                // tokio::sync::Notify has private method `notify_all` that, once stabilized,
+                // would allow us to make `EosSignaler` Cloneable with better ergonomics
+                // to await EOS from multiple places.
+                notifier.notify_one();
+            }
         }
     }
 }
@@ -83,6 +78,7 @@ mod tests {
 
     #[cfg(not(miri))]
     #[tokio::test]
+    /// Test against the foot-gun of using [`tokio::sync::Notify::notify_waiters`] instead of `notify_one`.
     async fn test_get_notified_after_1ms() {
         let buf = Bytes::from_static(b"abc");
         let (mut buf, signaler) = NotifyOnEos::new(buf);
