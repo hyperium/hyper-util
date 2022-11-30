@@ -2,8 +2,9 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
-use std::fmt;
+use std::fmt::{self, Debug};
 use std::future::Future;
+use std::hash::Hash;
 use std::marker::Unpin;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
@@ -23,9 +24,9 @@ use crate::common::{exec::Exec, ready};
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
-pub(super) struct Pool<T> {
+pub(super) struct Pool<T, K: Key> {
     // If the pool is disabled, this is None.
-    inner: Option<Arc<Mutex<PoolInner<T>>>>,
+    inner: Option<Arc<Mutex<PoolInner<T, K>>>>,
 }
 
 // Before using a pooled connection, make sure the sender is not dead.
@@ -41,6 +42,8 @@ pub(super) trait Poolable: Unpin + Send + Sized + 'static {
     fn reserve(self) -> Reservation<Self>;
     fn can_share(&self) -> bool;
 }
+
+pub trait Key: Eq + Hash + Clone + Debug + Unpin {}
 
 /// When checking out a pooled connection, it might be that the connection
 /// only supports a single reservation, or it might be usable for many.
@@ -61,16 +64,16 @@ pub(super) enum Reservation<T> {
 }
 
 /// Simple type alias in case the key type needs to be adjusted.
-pub(super) type Key = (http::uri::Scheme, http::uri::Authority); //Arc<String>;
+// pub(super) type Key = (http::uri::Scheme, http::uri::Authority); //Arc<String>;
 
-struct PoolInner<T> {
+struct PoolInner<T, K: Eq + Hash> {
     // A flag that a connection is being established, and the connection
     // should be shared. This prevents making multiple HTTP/2 connections
     // to the same host.
-    connecting: HashSet<Key>,
+    connecting: HashSet<K>,
     // These are internal Conns sitting in the event loop in the KeepAlive
     // state, waiting to receive a new Request to send on the socket.
-    idle: HashMap<Key, Vec<Idle<T>>>,
+    idle: HashMap<K, Vec<Idle<T>>>,
     max_idle_per_host: usize,
     // These are outstanding Checkouts that are waiting for a socket to be
     // able to send a Request one. This is used when "racing" for a new
@@ -81,7 +84,7 @@ struct PoolInner<T> {
     // this list is checked for any parked Checkouts, and tries to notify
     // them that the Conn could be used instead of waiting for a brand new
     // connection.
-    waiters: HashMap<Key, VecDeque<oneshot::Sender<T>>>,
+    waiters: HashMap<K, VecDeque<oneshot::Sender<T>>>,
     // A oneshot channel is used to allow the interval to be notified when
     // the Pool completely drops. That way, the interval can cancel immediately.
     #[cfg(feature = "runtime")]
@@ -107,8 +110,8 @@ impl Config {
     }
 }
 
-impl<T> Pool<T> {
-    pub(super) fn new(config: Config, __exec: &Exec) -> Pool<T> {
+impl<T, K: Key> Pool<T, K> {
+    pub(super) fn new(config: Config, __exec: &Exec) -> Pool<T, K> {
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
                 connecting: HashSet::new(),
@@ -145,10 +148,10 @@ impl<T> Pool<T> {
     }
 }
 
-impl<T: Poolable> Pool<T> {
+impl<T: Poolable, K: Key> Pool<T, K> {
     /// Returns a `Checkout` which is a future that resolves if an idle
     /// connection becomes available.
-    pub(super) fn checkout(&self, key: Key) -> Checkout<T> {
+    pub(super) fn checkout(&self, key: K) -> Checkout<T, K> {
         Checkout {
             key,
             pool: self.clone(),
@@ -158,7 +161,7 @@ impl<T: Poolable> Pool<T> {
 
     /// Ensure that there is only ever 1 connecting task for HTTP/2
     /// connections. This does nothing for HTTP/1.
-    pub(super) fn connecting(&self, key: &Key, ver: Ver) -> Option<Connecting<T>> {
+    pub(super) fn connecting(&self, key: &K, ver: Ver) -> Option<Connecting<T, K>> {
         if ver == Ver::Http2 {
             if let Some(ref enabled) = self.inner {
                 let mut inner = enabled.lock().unwrap();
@@ -185,7 +188,7 @@ impl<T: Poolable> Pool<T> {
     }
 
     #[cfg(test)]
-    fn locked(&self) -> std::sync::MutexGuard<'_, PoolInner<T>> {
+    fn locked(&self) -> std::sync::MutexGuard<'_, PoolInner<T, K>> {
         self.inner.as_ref().expect("enabled").lock().expect("lock")
     }
 
@@ -210,9 +213,9 @@ impl<T: Poolable> Pool<T> {
 
     pub(super) fn pooled(
         &self,
-        #[cfg_attr(not(feature = "http2"), allow(unused_mut))] mut connecting: Connecting<T>,
+        #[cfg_attr(not(feature = "http2"), allow(unused_mut))] mut connecting: Connecting<T, K>,
         value: T,
-    ) -> Pooled<T> {
+    ) -> Pooled<T, K> {
         let (value, pool_ref) = if let Some(ref enabled) = self.inner {
             match value.reserve() {
                 #[cfg(feature = "http2")]
@@ -252,7 +255,7 @@ impl<T: Poolable> Pool<T> {
         }
     }
 
-    fn reuse(&self, key: &Key, value: T) -> Pooled<T> {
+    fn reuse(&self, key: &K, value: T) -> Pooled<T, K> {
         debug!("reuse idle connection for {:?}", key);
         // TODO: unhack this
         // In Pool::pooled(), which is used for inserting brand new connections,
@@ -279,12 +282,12 @@ impl<T: Poolable> Pool<T> {
 }
 
 /// Pop off this list, looking for a usable connection that hasn't expired.
-struct IdlePopper<'a, T> {
-    key: &'a Key,
+struct IdlePopper<'a, T, K> {
+    key: &'a K,
     list: &'a mut Vec<Idle<T>>,
 }
 
-impl<'a, T: Poolable + 'a> IdlePopper<'a, T> {
+impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
     fn pop(self, expiration: &Expiration) -> Option<Idle<T>> {
         while let Some(entry) = self.list.pop() {
             // If the connection has been closed, or is older than our idle
@@ -326,8 +329,8 @@ impl<'a, T: Poolable + 'a> IdlePopper<'a, T> {
     }
 }
 
-impl<T: Poolable> PoolInner<T> {
-    fn put(&mut self, key: Key, value: T, __pool_ref: &Arc<Mutex<PoolInner<T>>>) {
+impl<T: Poolable, K: Key> PoolInner<T, K> {
+    fn put(&mut self, key: K, value: T, __pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
         if value.can_share() && self.idle.contains_key(&key) {
             trace!("put; existing idle HTTP/2 connection for {:?}", key);
             return;
@@ -397,7 +400,7 @@ impl<T: Poolable> PoolInner<T> {
 
     /// A `Connecting` task is complete. Not necessarily successfully,
     /// but the lock is going away, so clean up.
-    fn connected(&mut self, key: &Key) {
+    fn connected(&mut self, key: &K) {
         let existed = self.connecting.remove(key);
         debug_assert!(existed, "Connecting dropped, key not in pool.connecting");
         // cancel any waiters. if there are any, it's because
@@ -407,7 +410,7 @@ impl<T: Poolable> PoolInner<T> {
     }
 
     #[cfg(feature = "runtime")]
-    fn spawn_idle_interval(&mut self, pool_ref: &Arc<Mutex<PoolInner<T>>>) {
+    fn spawn_idle_interval(&mut self, pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
         let (dur, rx) = {
             if self.idle_interval_ref.is_some() {
                 return;
@@ -432,12 +435,12 @@ impl<T: Poolable> PoolInner<T> {
     }
 }
 
-impl<T> PoolInner<T> {
+impl<T, K: Eq + Hash> PoolInner<T, K> {
     /// Any `FutureResponse`s that were created will have made a `Checkout`,
     /// and possibly inserted into the pool that it is waiting for an idle
     /// connection. If a user ever dropped that future, we need to clean out
     /// those parked senders.
-    fn clean_waiters(&mut self, key: &Key) {
+    fn clean_waiters(&mut self, key: &K) {
         let mut remove_waiters = false;
         if let Some(waiters) = self.waiters.get_mut(key) {
             waiters.retain(|tx| !tx.is_canceled());
@@ -450,7 +453,7 @@ impl<T> PoolInner<T> {
 }
 
 #[cfg(feature = "runtime")]
-impl<T: Poolable> PoolInner<T> {
+impl<T: Poolable, K: Key> PoolInner<T, K> {
     /// This should *only* be called by the IdleTask
     fn clear_expired(&mut self) {
         let dur = self.timeout.expect("interval assumes timeout");
@@ -481,8 +484,8 @@ impl<T: Poolable> PoolInner<T> {
     }
 }
 
-impl<T> Clone for Pool<T> {
-    fn clone(&self) -> Pool<T> {
+impl<T, K: Key> Clone for Pool<T, K> {
+    fn clone(&self) -> Pool<T, K> {
         Pool {
             inner: self.inner.clone(),
         }
@@ -491,14 +494,14 @@ impl<T> Clone for Pool<T> {
 
 /// A wrapped poolable value that tries to reinsert to the Pool on Drop.
 // Note: The bounds `T: Poolable` is needed for the Drop impl.
-pub(super) struct Pooled<T: Poolable> {
+pub(super) struct Pooled<T: Poolable, K: Key> {
     value: Option<T>,
     is_reused: bool,
-    key: Key,
-    pool: WeakOpt<Mutex<PoolInner<T>>>,
+    key: K,
+    pool: WeakOpt<Mutex<PoolInner<T, K>>>,
 }
 
-impl<T: Poolable> Pooled<T> {
+impl<T: Poolable, K: Key> Pooled<T, K> {
     pub(super) fn is_reused(&self) -> bool {
         self.is_reused
     }
@@ -516,20 +519,20 @@ impl<T: Poolable> Pooled<T> {
     }
 }
 
-impl<T: Poolable> Deref for Pooled<T> {
+impl<T: Poolable, K: Key> Deref for Pooled<T, K> {
     type Target = T;
     fn deref(&self) -> &T {
         self.as_ref()
     }
 }
 
-impl<T: Poolable> DerefMut for Pooled<T> {
+impl<T: Poolable, K: Key> DerefMut for Pooled<T, K> {
     fn deref_mut(&mut self) -> &mut T {
         self.as_mut()
     }
 }
 
-impl<T: Poolable> Drop for Pooled<T> {
+impl<T: Poolable, K: Key> Drop for Pooled<T, K> {
     fn drop(&mut self) {
         if let Some(value) = self.value.take() {
             if !value.is_open() {
@@ -551,7 +554,7 @@ impl<T: Poolable> Drop for Pooled<T> {
     }
 }
 
-impl<T: Poolable> fmt::Debug for Pooled<T> {
+impl<T: Poolable, K: Key> fmt::Debug for Pooled<T, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Pooled").field("key", &self.key).finish()
     }
@@ -564,9 +567,9 @@ struct Idle<T> {
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
-pub(super) struct Checkout<T> {
-    key: Key,
-    pool: Pool<T>,
+pub(super) struct Checkout<T, K: Key> {
+    key: K,
+    pool: Pool<T, K>,
     waiter: Option<oneshot::Receiver<T>>,
 }
 
@@ -581,11 +584,11 @@ impl fmt::Display for CheckoutIsClosedError {
     }
 }
 
-impl<T: Poolable> Checkout<T> {
+impl<T: Poolable, K: Key> Checkout<T, K> {
     fn poll_waiter(
         &mut self,
         cx: &mut task::Context<'_>,
-    ) -> Poll<Option<crate::Result<Pooled<T>>>> {
+    ) -> Poll<Option<crate::Result<Pooled<T, K>>>> {
         if let Some(mut rx) = self.waiter.take() {
             match Pin::new(&mut rx).poll(cx) {
                 Poll::Ready(Ok(value)) => {
@@ -608,7 +611,7 @@ impl<T: Poolable> Checkout<T> {
         }
     }
 
-    fn checkout(&mut self, cx: &mut task::Context<'_>) -> Option<Pooled<T>> {
+    fn checkout(&mut self, cx: &mut task::Context<'_>) -> Option<Pooled<T, K>> {
         let entry = {
             let mut inner = self.pool.inner.as_ref()?.lock().unwrap();
             let expiration = Expiration::new(inner.timeout);
@@ -658,8 +661,8 @@ impl<T: Poolable> Checkout<T> {
     }
 }
 
-impl<T: Poolable> Future for Checkout<T> {
-    type Output = crate::Result<Pooled<T>>;
+impl<T: Poolable, K: Key> Future for Checkout<T, K> {
+    type Output = crate::Result<Pooled<T, K>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         if let Some(pooled) = ready!(self.poll_waiter(cx)?) {
@@ -678,7 +681,7 @@ impl<T: Poolable> Future for Checkout<T> {
     }
 }
 
-impl<T> Drop for Checkout<T> {
+impl<T, K: Key> Drop for Checkout<T, K> {
     fn drop(&mut self) {
         if self.waiter.take().is_some() {
             trace!("checkout dropped for {:?}", self.key);
@@ -691,13 +694,13 @@ impl<T> Drop for Checkout<T> {
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
-pub(super) struct Connecting<T: Poolable> {
-    key: Key,
-    pool: WeakOpt<Mutex<PoolInner<T>>>,
+pub(super) struct Connecting<T: Poolable, K: Key> {
+    key: K,
+    pool: WeakOpt<Mutex<PoolInner<T, K>>>,
 }
 
-impl<T: Poolable> Connecting<T> {
-    pub(super) fn alpn_h2(self, pool: &Pool<T>) -> Option<Self> {
+impl<T: Poolable, K: Key> Connecting<T, K> {
+    pub(super) fn alpn_h2(self, pool: &Pool<T, K>) -> Option<Self> {
         debug_assert!(
             self.pool.0.is_none(),
             "Connecting::alpn_h2 but already Http2"
@@ -707,7 +710,7 @@ impl<T: Poolable> Connecting<T> {
     }
 }
 
-impl<T: Poolable> Drop for Connecting<T> {
+impl<T: Poolable, K: Key> Drop for Connecting<T, K> {
     fn drop(&mut self) {
         if let Some(pool) = self.pool.upgrade() {
             // No need to panic on drop, that could abort!
@@ -736,10 +739,10 @@ impl Expiration {
 
 #[cfg(feature = "runtime")]
 pin_project_lite::pin_project! {
-    struct IdleTask<T> {
+    struct IdleTask<T, K: Key> {
         #[pin]
         interval: Interval,
-        pool: WeakOpt<Mutex<PoolInner<T>>>,
+        pool: WeakOpt<Mutex<PoolInner<T, K>>>,
         // This allows the IdleTask to be notified as soon as the entire
         // Pool is fully dropped, and shutdown. This channel is never sent on,
         // but Err(Canceled) will be received when the Pool is dropped.
@@ -749,7 +752,7 @@ pin_project_lite::pin_project! {
 }
 
 #[cfg(feature = "runtime")]
-impl<T: Poolable + 'static> Future for IdleTask<T> {
+impl<T: Poolable + 'static, K: Key> Future for IdleTask<T, K> {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
@@ -798,9 +801,18 @@ mod tests {
     use std::pin::Pin;
     use std::task::{self, Poll};
     use std::time::Duration;
+    use std::fmt::{self, Debug};
+    use std::hash::Hash;
 
-    use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
+    use super::{Connecting, Pool, Poolable, Reservation, WeakOpt, Key};
     use crate::common::exec::Exec;
+
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    struct KeyImpl (http::uri::Scheme, http::uri::Authority);
+
+    impl Key for KeyImpl {}
+
+    type KeyTuple = (http::uri::Scheme, http::uri::Authority);
 
     /// Test unique reservations.
     #[derive(Debug, PartialEq, Eq)]
@@ -820,22 +832,23 @@ mod tests {
         }
     }
 
-    fn c<T: Poolable>(key: Key) -> Connecting<T> {
+    fn c<T: Poolable, K: Key>(key: K) -> Connecting<T, K> {
         Connecting {
             key,
             pool: WeakOpt::none(),
         }
     }
 
-    fn host_key(s: &str) -> Key {
-        (http::uri::Scheme::HTTP, s.parse().expect("host key"))
+    fn host_key(s: &str) -> KeyImpl {
+        KeyImpl(http::uri::Scheme::HTTP, s.parse().expect("host key"))
+        
     }
 
-    fn pool_no_timer<T>() -> Pool<T> {
+    fn pool_no_timer<T, K: Key>() -> Pool<T, K> {
         pool_max_idle_no_timer(::std::usize::MAX)
     }
 
-    fn pool_max_idle_no_timer<T>(max_idle: usize) -> Pool<T> {
+    fn pool_max_idle_no_timer<T, K: Key>(max_idle: usize) -> Pool<T, K> {
         let pool = Pool::new(
             super::Config {
                 idle_timeout: Some(Duration::from_millis(100)),
@@ -988,7 +1001,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_pool_checkout_drop_cleans_up_waiters() {
-        let pool = pool_no_timer::<Uniq<i32>>();
+        let pool = pool_no_timer::<Uniq<i32>, KeyImpl>();
         let key = host_key("foo");
 
         let mut checkout1 = pool.checkout(key.clone());
