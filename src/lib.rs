@@ -1,4 +1,5 @@
 #![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! hyper utilities
 pub use crate::error::{GenericError, Result};
@@ -9,4 +10,3 @@ pub mod rt;
 pub mod server;
 
 mod error;
-mod util;

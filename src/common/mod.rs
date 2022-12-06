@@ -12,5 +12,6 @@ macro_rules! ready {
 pub(crate) use ready;
 pub(crate) mod exec;
 pub(crate) mod never;
+pub(crate) mod rewind;
 
 pub(crate) use never::Never;
