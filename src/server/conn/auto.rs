@@ -319,6 +319,7 @@ mod tests {
 
     const BODY: &'static [u8] = b"Hello, world!";
 
+    #[cfg(not(miri))]
     #[tokio::test]
     async fn http1() {
         let addr = start_server().await;
@@ -334,6 +335,7 @@ mod tests {
         assert_eq!(body, BODY);
     }
 
+    #[cfg(not(miri))]
     #[tokio::test]
     async fn http2() {
         let addr = start_server().await;
