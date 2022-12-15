@@ -24,7 +24,7 @@ use crate::common::{exec::Exec, ready};
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
-pub(super) struct Pool<T, K: Key> {
+pub struct Pool<T, K: Key> {
     // If the pool is disabled, this is None.
     inner: Option<Arc<Mutex<PoolInner<T, K>>>>,
 }
@@ -34,7 +34,7 @@ pub(super) struct Pool<T, K: Key> {
 // This is a trait to allow the `client::pool::tests` to work for `i32`.
 //
 // See https://github.com/hyperium/hyper/issues/1429
-pub(super) trait Poolable: Unpin + Send + Sized + 'static {
+pub trait Poolable: Unpin + Send + Sized + 'static {
     fn is_open(&self) -> bool;
     /// Reserve this connection.
     ///
@@ -54,7 +54,7 @@ impl<T> Key for T where T: Eq + Hash + Clone + Debug + Unpin + Send + 'static {}
 /// used for multiple requests.
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
-pub(super) enum Reservation<T> {
+pub enum Reservation<T> {
     /// This connection could be used multiple times, the first one will be
     /// reinserted into the `idle` pool, and the second will be given to
     /// the `Checkout`.
@@ -66,7 +66,7 @@ pub(super) enum Reservation<T> {
 }
 
 /// Simple type alias in case the key type needs to be adjusted.
-// pub(super) type Key = (http::uri::Scheme, http::uri::Authority); //Arc<String>;
+// pub type Key = (http::uri::Scheme, http::uri::Authority); //Arc<String>;
 
 struct PoolInner<T, K: Eq + Hash> {
     // A flag that a connection is being established, and the connection
@@ -101,19 +101,19 @@ struct PoolInner<T, K: Eq + Hash> {
 struct WeakOpt<T>(Option<Weak<T>>);
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Config {
-    pub(super) idle_timeout: Option<Duration>,
-    pub(super) max_idle_per_host: usize,
+pub struct Config {
+    pub idle_timeout: Option<Duration>,
+    pub max_idle_per_host: usize,
 }
 
 impl Config {
-    pub(super) fn is_enabled(&self) -> bool {
+    pub fn is_enabled(&self) -> bool {
         self.max_idle_per_host > 0
     }
 }
 
 impl<T, K: Key> Pool<T, K> {
-    pub(super) fn new(config: Config, __exec: &Exec) -> Pool<T, K> {
+    pub fn new(config: Config, __exec: &Exec) -> Pool<T, K> {
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
                 connecting: HashSet::new(),
@@ -153,7 +153,7 @@ impl<T, K: Key> Pool<T, K> {
 impl<T: Poolable, K: Key> Pool<T, K> {
     /// Returns a `Checkout` which is a future that resolves if an idle
     /// connection becomes available.
-    pub(super) fn checkout(&self, key: K) -> Checkout<T, K> {
+    pub fn checkout(&self, key: K) -> Checkout<T, K> {
         Checkout {
             key,
             pool: self.clone(),
@@ -163,7 +163,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
 
     /// Ensure that there is only ever 1 connecting task for HTTP/2
     /// connections. This does nothing for HTTP/1.
-    pub(super) fn connecting(&self, key: &K, ver: Ver) -> Option<Connecting<T, K>> {
+    pub fn connecting(&self, key: &K, ver: Ver) -> Option<Connecting<T, K>> {
         if ver == Ver::Http2 {
             if let Some(ref enabled) = self.inner {
                 let mut inner = enabled.lock().unwrap();
@@ -213,7 +213,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
     }
     */
 
-    pub(super) fn pooled(
+    pub fn pooled(
         &self,
         #[cfg_attr(not(feature = "http2"), allow(unused_mut))] mut connecting: Connecting<T, K>,
         value: T,
@@ -496,7 +496,7 @@ impl<T, K: Key> Clone for Pool<T, K> {
 
 /// A wrapped poolable value that tries to reinsert to the Pool on Drop.
 // Note: The bounds `T: Poolable` is needed for the Drop impl.
-pub(super) struct Pooled<T: Poolable, K: Key> {
+pub struct Pooled<T: Poolable, K: Key> {
     value: Option<T>,
     is_reused: bool,
     key: K,
@@ -504,11 +504,11 @@ pub(super) struct Pooled<T: Poolable, K: Key> {
 }
 
 impl<T: Poolable, K: Key> Pooled<T, K> {
-    pub(super) fn is_reused(&self) -> bool {
+    pub fn is_reused(&self) -> bool {
         self.is_reused
     }
 
-    pub(super) fn is_pool_enabled(&self) -> bool {
+    pub fn is_pool_enabled(&self) -> bool {
         self.pool.0.is_some()
     }
 
@@ -569,14 +569,14 @@ struct Idle<T> {
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
-pub(super) struct Checkout<T, K: Key> {
+pub struct Checkout<T, K: Key> {
     key: K,
     pool: Pool<T, K>,
     waiter: Option<oneshot::Receiver<T>>,
 }
 
 #[derive(Debug)]
-pub(super) struct CheckoutIsClosedError;
+pub struct CheckoutIsClosedError;
 
 impl Error for CheckoutIsClosedError {}
 
@@ -696,13 +696,13 @@ impl<T, K: Key> Drop for Checkout<T, K> {
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
-pub(super) struct Connecting<T: Poolable, K: Key> {
+pub struct Connecting<T: Poolable, K: Key> {
     key: K,
     pool: WeakOpt<Mutex<PoolInner<T, K>>>,
 }
 
 impl<T: Poolable, K: Key> Connecting<T, K> {
-    pub(super) fn alpn_h2(self, pool: &Pool<T, K>) -> Option<Self> {
+    pub fn alpn_h2(self, pool: &Pool<T, K>) -> Option<Self> {
         debug_assert!(
             self.pool.0.is_none(),
             "Connecting::alpn_h2 but already Http2"

@@ -10,7 +10,7 @@ macro_rules! ready {
 }
 
 pub(crate) use ready;
-pub(crate) mod exec;
+pub mod exec;
 pub(crate) mod never;
 
 #[cfg(feature = "runtime")]
