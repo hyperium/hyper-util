@@ -13,4 +13,5 @@ pub(crate) use ready;
 pub(crate) mod exec;
 pub(crate) mod never;
 
+#[cfg(feature = "runtime")]
 pub(crate) use never::Never;
