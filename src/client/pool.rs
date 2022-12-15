@@ -43,7 +43,20 @@ pub(super) trait Poolable: Unpin + Send + Sized + 'static {
     fn can_share(&self) -> bool;
 }
 
-pub trait Key: Eq + Hash + Clone + Debug + Unpin {}
+pub trait Key: Eq + Hash + Clone + Debug + Unpin + Send + 'static {}
+
+impl<T> Key for T where T: Eq + Hash + Clone + Debug + Unpin + Send + 'static {}
+
+type OldKey = (http::uri::Scheme, http::uri::Authority);
+
+fn assert() {
+    let x: OldKey = (http::uri::Scheme::HTTP, "x".parse().expect("host key"));
+    test(x);
+}
+fn test<T: Key>(a: T) {
+}
+
+// impl Key for OldKey {}
 
 /// When checking out a pooled connection, it might be that the connection
 /// only supports a single reservation, or it might be usable for many.
@@ -809,8 +822,6 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
     struct KeyImpl (http::uri::Scheme, http::uri::Authority);
-
-    impl Key for KeyImpl {}
 
     type KeyTuple = (http::uri::Scheme, http::uri::Authority);
 
