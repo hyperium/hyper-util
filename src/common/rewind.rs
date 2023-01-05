@@ -25,6 +25,7 @@ impl<T> Rewind<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn new_buffered(io: T, buf: Bytes) -> Self {
         Rewind {
             pre: Some(buf),
