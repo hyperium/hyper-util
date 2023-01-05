@@ -29,238 +29,15 @@ impl Builder {
             http2: http2::Builder::new(TokioExecutor::new()),
         }
     }
-    /// Set whether HTTP/1 connections should support half-closures.
-    ///
-    /// Clients can chose to shutdown their write-side while waiting
-    /// for the server to respond. Setting this to `true` will
-    /// prevent closing the connection immediately if `read`
-    /// detects an EOF in the middle of a request.
-    ///
-    /// Default is `false`.
-    pub fn http1_half_close(&mut self, val: bool) -> &mut Self {
-        self.http1.http1_half_close(val);
-        self
+
+    /// Http1 configuration.
+    pub fn http1(&mut self) -> Http1Builder<'_> {
+        Http1Builder { inner: self }
     }
-    /// Enables or disables HTTP/1 keep-alive.
-    ///
-    /// Default is true.
-    pub fn http1_keep_alive(&mut self, val: bool) -> &mut Self {
-        self.http1.http1_keep_alive(val);
-        self
-    }
-    /// Set whether HTTP/1 connections will write header names as title case at
-    /// the socket level.
-    ///
-    /// Note that this setting does not affect HTTP/2.
-    ///
-    /// Default is false.
-    pub fn http1_title_case_headers(&mut self, enabled: bool) -> &mut Self {
-        self.http1.http1_title_case_headers(enabled);
-        self
-    }
-    /// Set whether to support preserving original header cases.
-    ///
-    /// Currently, this will record the original cases received, and store them
-    /// in a private extension on the `Request`. It will also look for and use
-    /// such an extension in any provided `Response`.
-    ///
-    /// Since the relevant extension is still private, there is no way to
-    /// interact with the original cases. The only effect this can have now is
-    /// to forward the cases in a proxy-like fashion.
-    ///
-    /// Note that this setting does not affect HTTP/2.
-    ///
-    /// Default is false.
-    pub fn http1_preserve_header_case(&mut self, enabled: bool) -> &mut Self {
-        self.http1.http1_preserve_header_case(enabled);
-        self
-    }
-    /// Set a timeout for reading client request headers. If a client does not
-    /// transmit the entire header within this time, the connection is closed.
-    ///
-    /// Default is None.
-    pub fn http1_header_read_timeout(&mut self, read_timeout: Duration) -> &mut Self {
-        self.http1.http1_header_read_timeout(read_timeout);
-        self
-    }
-    /// Set whether HTTP/1 connections should try to use vectored writes,
-    /// or always flatten into a single buffer.
-    ///
-    /// Note that setting this to false may mean more copies of body data,
-    /// but may also improve performance when an IO transport doesn't
-    /// support vectored writes well, such as most TLS implementations.
-    ///
-    /// Setting this to true will force hyper to use queued strategy
-    /// which may eliminate unnecessary cloning on some TLS backends
-    ///
-    /// Default is `auto`. In this mode hyper will try to guess which
-    /// mode to use
-    pub fn http1_writev(&mut self, val: bool) -> &mut Self {
-        self.http1.http1_writev(val);
-        self
-    }
-    /// Set the maximum buffer size for the connection.
-    ///
-    /// Default is ~400kb.
-    ///
-    /// # Panics
-    ///
-    /// The minimum value allowed is 8192. This method panics if the passed `max` is less than the minimum.
-    #[cfg(feature = "http1")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http1_max_buf_size(&mut self, max: usize) -> &mut Self {
-        self.http1.max_buf_size(max);
-        self
-    }
-    /// Aggregates flushes to better support pipelined responses.
-    ///
-    /// Experimental, may have bugs.
-    ///
-    /// Default is false.
-    pub fn http1_pipeline_flush(&mut self, enabled: bool) -> &mut Self {
-        self.http1.pipeline_flush(enabled);
-        self
-    }
-    /// Set the timer used in background tasks.
-    pub fn http1_timer<M>(&mut self, timer: M) -> &mut Self
-    where
-        M: Timer + Send + Sync + 'static,
-    {
-        self.http1.timer(timer);
-        self
-    }
-    /// Sets the [`SETTINGS_INITIAL_WINDOW_SIZE`][spec] option for HTTP2
-    /// stream-level flow control.
-    ///
-    /// Passing `None` will do nothing.
-    ///
-    /// If not set, hyper will use a default.
-    ///
-    /// [spec]: https://http2.github.io/http2-spec/#SETTINGS_INITIAL_WINDOW_SIZE
-    #[cfg(feature = "http2")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_initial_stream_window_size(&mut self, sz: impl Into<Option<u32>>) -> &mut Self {
-        self.http2.http2_initial_stream_window_size(sz);
-        self
-    }
-    /// Sets the max connection-level flow control for HTTP2.
-    ///
-    /// Passing `None` will do nothing.
-    ///
-    /// If not set, hyper will use a default.
-    #[cfg(feature = "http2")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_initial_connection_window_size(
-        &mut self,
-        sz: impl Into<Option<u32>>,
-    ) -> &mut Self {
-        self.http2.http2_initial_connection_window_size(sz);
-        self
-    }
-    /// Sets whether to use an adaptive flow control.
-    ///
-    /// Enabling this will override the limits set in
-    /// `http2_initial_stream_window_size` and
-    /// `http2_initial_connection_window_size`.
-    #[cfg(feature = "http2")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_adaptive_window(&mut self, enabled: bool) -> &mut Self {
-        self.http2.http2_adaptive_window(enabled);
-        self
-    }
-    /// Sets the maximum frame size to use for HTTP2.
-    ///
-    /// Passing `None` will do nothing.
-    ///
-    /// If not set, hyper will use a default.
-    #[cfg(feature = "http2")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_max_frame_size(&mut self, sz: impl Into<Option<u32>>) -> &mut Self {
-        self.http2.http2_max_frame_size(sz);
-        self
-    }
-    /// Sets the [`SETTINGS_MAX_CONCURRENT_STREAMS`][spec] option for HTTP2
-    /// connections.
-    ///
-    /// Default is no limit (`std::u32::MAX`). Passing `None` will do nothing.
-    ///
-    /// [spec]: https://http2.github.io/http2-spec/#SETTINGS_MAX_CONCURRENT_STREAMS
-    #[cfg(feature = "http2")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_max_concurrent_streams(&mut self, max: impl Into<Option<u32>>) -> &mut Self {
-        self.http2.http2_max_concurrent_streams(max);
-        self
-    }
-    /// Sets an interval for HTTP2 Ping frames should be sent to keep a
-    /// connection alive.
-    ///
-    /// Pass `None` to disable HTTP2 keep-alive.
-    ///
-    /// Default is currently disabled.
-    ///
-    /// # Cargo Feature
-    ///
-    #[cfg(feature = "http2")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_keep_alive_interval(
-        &mut self,
-        interval: impl Into<Option<Duration>>,
-    ) -> &mut Self {
-        self.http2.http2_keep_alive_interval(interval);
-        self
-    }
-    /// Sets a timeout for receiving an acknowledgement of the keep-alive ping.
-    ///
-    /// If the ping is not acknowledged within the timeout, the connection will
-    /// be closed. Does nothing if `http2_keep_alive_interval` is disabled.
-    ///
-    /// Default is 20 seconds.
-    ///
-    /// # Cargo Feature
-    ///
-    #[cfg(feature = "http2")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_keep_alive_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.http2.http2_keep_alive_timeout(timeout);
-        self
-    }
-    /// Set the maximum write buffer size for each HTTP/2 stream.
-    ///
-    /// Default is currently ~400KB, but may change.
-    ///
-    /// # Panics
-    ///
-    /// The value must be no larger than `u32::MAX`.
-    #[cfg(feature = "http2")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_max_send_buf_size(&mut self, max: usize) -> &mut Self {
-        self.http2.http2_max_send_buf_size(max);
-        self
-    }
-    /// Enables the [extended CONNECT protocol].
-    ///
-    /// [extended CONNECT protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
-    #[cfg(feature = "http2")]
-    pub fn http2_enable_connect_protocol(&mut self) -> &mut Self {
-        self.http2.http2_enable_connect_protocol();
-        self
-    }
-    /// Sets the max size of received header frames.
-    ///
-    /// Default is currently ~16MB, but may change.
-    #[cfg(feature = "http2")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
-    pub fn http2_max_header_list_size(&mut self, max: u32) -> &mut Self {
-        self.http2.http2_max_header_list_size(max);
-        self
-    }
-    /// Set the timer used in background tasks.
-    pub fn http2_timer<M>(&mut self, timer: M) -> &mut Self
-    where
-        M: Timer + Send + Sync + 'static,
-    {
-        self.http2.timer(timer);
-        self
+
+    /// Http2 configuration.
+    pub fn http2(&mut self) -> Http2Builder<'_> {
+        Http2Builder { inner: self }
     }
 
     /// Bind a connection together with a [`Service`].
@@ -274,6 +51,11 @@ impl Builder {
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: AsyncRead + AsyncWrite + Unpin + 'static,
     {
+        enum Protocol {
+            H1,
+            H2,
+        }
+
         let mut buf = Vec::new();
 
         let protocol = loop {
@@ -301,15 +83,291 @@ impl Builder {
     }
 }
 
-enum Protocol {
-    H1,
-    H2,
+/// Http1 part of builder.
+pub struct Http1Builder<'a> {
+    inner: &'a mut Builder,
+}
+
+impl Http1Builder<'_> {
+    /// Http2 configuration.
+    pub fn http2(&mut self) -> Http2Builder<'_> {
+        Http2Builder {
+            inner: &mut self.inner,
+        }
+    }
+
+    /// Set whether HTTP/1 connections should support half-closures.
+    ///
+    /// Clients can chose to shutdown their write-side while waiting
+    /// for the server to respond. Setting this to `true` will
+    /// prevent closing the connection immediately if `read`
+    /// detects an EOF in the middle of a request.
+    ///
+    /// Default is `false`.
+    pub fn half_close(&mut self, val: bool) -> &mut Self {
+        self.inner.http1.http1_half_close(val);
+        self
+    }
+
+    /// Enables or disables HTTP/1 keep-alive.
+    ///
+    /// Default is true.
+    pub fn keep_alive(&mut self, val: bool) -> &mut Self {
+        self.inner.http1.http1_keep_alive(val);
+        self
+    }
+
+    /// Set whether HTTP/1 connections will write header names as title case at
+    /// the socket level.
+    ///
+    /// Note that this setting does not affect HTTP/2.
+    ///
+    /// Default is false.
+    pub fn title_case_headers(&mut self, enabled: bool) -> &mut Self {
+        self.inner.http1.http1_title_case_headers(enabled);
+        self
+    }
+
+    /// Set whether to support preserving original header cases.
+    ///
+    /// Currently, this will record the original cases received, and store them
+    /// in a private extension on the `Request`. It will also look for and use
+    /// such an extension in any provided `Response`.
+    ///
+    /// Since the relevant extension is still private, there is no way to
+    /// interact with the original cases. The only effect this can have now is
+    /// to forward the cases in a proxy-like fashion.
+    ///
+    /// Note that this setting does not affect HTTP/2.
+    ///
+    /// Default is false.
+    pub fn preserve_header_case(&mut self, enabled: bool) -> &mut Self {
+        self.inner.http1.http1_preserve_header_case(enabled);
+        self
+    }
+
+    /// Set a timeout for reading client request headers. If a client does not
+    /// transmit the entire header within this time, the connection is closed.
+    ///
+    /// Default is None.
+    pub fn header_read_timeout(&mut self, read_timeout: Duration) -> &mut Self {
+        self.inner.http1.http1_header_read_timeout(read_timeout);
+        self
+    }
+
+    /// Set whether HTTP/1 connections should try to use vectored writes,
+    /// or always flatten into a single buffer.
+    ///
+    /// Note that setting this to false may mean more copies of body data,
+    /// but may also improve performance when an IO transport doesn't
+    /// support vectored writes well, such as most TLS implementations.
+    ///
+    /// Setting this to true will force hyper to use queued strategy
+    /// which may eliminate unnecessary cloning on some TLS backends
+    ///
+    /// Default is `auto`. In this mode hyper will try to guess which
+    /// mode to use
+    pub fn writev(&mut self, val: bool) -> &mut Self {
+        self.inner.http1.http1_writev(val);
+        self
+    }
+
+    /// Set the maximum buffer size for the connection.
+    ///
+    /// Default is ~400kb.
+    ///
+    /// # Panics
+    ///
+    /// The minimum value allowed is 8192. This method panics if the passed `max` is less than the minimum.
+    pub fn max_buf_size(&mut self, max: usize) -> &mut Self {
+        self.inner.http1.max_buf_size(max);
+        self
+    }
+
+    /// Aggregates flushes to better support pipelined responses.
+    ///
+    /// Experimental, may have bugs.
+    ///
+    /// Default is false.
+    pub fn pipeline_flush(&mut self, enabled: bool) -> &mut Self {
+        self.inner.http1.pipeline_flush(enabled);
+        self
+    }
+
+    /// Set the timer used in background tasks.
+    pub fn timer<M>(&mut self, timer: M) -> &mut Self
+    where
+        M: Timer + Send + Sync + 'static,
+    {
+        self.inner.http1.timer(timer);
+        self
+    }
+
+    /// Bind a connection together with a [`Service`].
+    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
+    where
+        S: Service<Request<Incoming>, Response = Response<B>> + Send,
+        S::Future: Send + 'static,
+        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B: Body + Send + 'static,
+        B::Data: Send,
+        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        I: AsyncRead + AsyncWrite + Unpin + 'static,
+    {
+        self.inner.serve_connection(io, service).await
+    }
+}
+
+/// Http2 part of builder.
+pub struct Http2Builder<'a> {
+    inner: &'a mut Builder,
+}
+
+impl Http2Builder<'_> {
+    /// Http1 configuration.
+    pub fn http1(&mut self) -> Http1Builder<'_> {
+        Http1Builder {
+            inner: &mut self.inner,
+        }
+    }
+
+    /// Sets the [`SETTINGS_INITIAL_WINDOW_SIZE`][spec] option for HTTP2
+    /// stream-level flow control.
+    ///
+    /// Passing `None` will do nothing.
+    ///
+    /// If not set, hyper will use a default.
+    ///
+    /// [spec]: https://http2.github.io/http2-spec/#SETTINGS_INITIAL_WINDOW_SIZE
+    pub fn initial_stream_window_size(&mut self, sz: impl Into<Option<u32>>) -> &mut Self {
+        self.inner.http2.http2_initial_stream_window_size(sz);
+        self
+    }
+
+    /// Sets the max connection-level flow control for HTTP2.
+    ///
+    /// Passing `None` will do nothing.
+    ///
+    /// If not set, hyper will use a default.
+    pub fn initial_connection_window_size(&mut self, sz: impl Into<Option<u32>>) -> &mut Self {
+        self.inner.http2.http2_initial_connection_window_size(sz);
+        self
+    }
+
+    /// Sets whether to use an adaptive flow control.
+    ///
+    /// Enabling this will override the limits set in
+    /// `http2_initial_stream_window_size` and
+    /// `http2_initial_connection_window_size`.
+    pub fn adaptive_window(&mut self, enabled: bool) -> &mut Self {
+        self.inner.http2.http2_adaptive_window(enabled);
+        self
+    }
+
+    /// Sets the maximum frame size to use for HTTP2.
+    ///
+    /// Passing `None` will do nothing.
+    ///
+    /// If not set, hyper will use a default.
+    pub fn max_frame_size(&mut self, sz: impl Into<Option<u32>>) -> &mut Self {
+        self.inner.http2.http2_max_frame_size(sz);
+        self
+    }
+
+    /// Sets the [`SETTINGS_MAX_CONCURRENT_STREAMS`][spec] option for HTTP2
+    /// connections.
+    ///
+    /// Default is no limit (`std::u32::MAX`). Passing `None` will do nothing.
+    ///
+    /// [spec]: https://http2.github.io/http2-spec/#SETTINGS_MAX_CONCURRENT_STREAMS
+    pub fn max_concurrent_streams(&mut self, max: impl Into<Option<u32>>) -> &mut Self {
+        self.inner.http2.http2_max_concurrent_streams(max);
+        self
+    }
+
+    /// Sets an interval for HTTP2 Ping frames should be sent to keep a
+    /// connection alive.
+    ///
+    /// Pass `None` to disable HTTP2 keep-alive.
+    ///
+    /// Default is currently disabled.
+    ///
+    /// # Cargo Feature
+    ///
+    pub fn keep_alive_interval(&mut self, interval: impl Into<Option<Duration>>) -> &mut Self {
+        self.inner.http2.http2_keep_alive_interval(interval);
+        self
+    }
+
+    /// Sets a timeout for receiving an acknowledgement of the keep-alive ping.
+    ///
+    /// If the ping is not acknowledged within the timeout, the connection will
+    /// be closed. Does nothing if `http2_keep_alive_interval` is disabled.
+    ///
+    /// Default is 20 seconds.
+    ///
+    /// # Cargo Feature
+    ///
+    pub fn keep_alive_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.inner.http2.http2_keep_alive_timeout(timeout);
+        self
+    }
+
+    /// Set the maximum write buffer size for each HTTP/2 stream.
+    ///
+    /// Default is currently ~400KB, but may change.
+    ///
+    /// # Panics
+    ///
+    /// The value must be no larger than `u32::MAX`.
+    pub fn max_send_buf_size(&mut self, max: usize) -> &mut Self {
+        self.inner.http2.http2_max_send_buf_size(max);
+        self
+    }
+
+    /// Enables the [extended CONNECT protocol].
+    ///
+    /// [extended CONNECT protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
+    pub fn enable_connect_protocol(&mut self) -> &mut Self {
+        self.inner.http2.http2_enable_connect_protocol();
+        self
+    }
+
+    /// Sets the max size of received header frames.
+    ///
+    /// Default is currently ~16MB, but may change.
+    pub fn max_header_list_size(&mut self, max: u32) -> &mut Self {
+        self.inner.http2.http2_max_header_list_size(max);
+        self
+    }
+
+    /// Set the timer used in background tasks.
+    pub fn timer<M>(&mut self, timer: M) -> &mut Self
+    where
+        M: Timer + Send + Sync + 'static,
+    {
+        self.inner.http2.timer(timer);
+        self
+    }
+
+    /// Bind a connection together with a [`Service`].
+    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
+    where
+        S: Service<Request<Incoming>, Response = Response<B>> + Send,
+        S::Future: Send + 'static,
+        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B: Body + Send + 'static,
+        B::Data: Send,
+        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        I: AsyncRead + AsyncWrite + Unpin + 'static,
+    {
+        self.inner.serve_connection(io, service).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Builder;
-    use crate::rt::tokio_executor::TokioExecutor;
+    use crate::{rt::tokio_executor::TokioExecutor, server::conn::auto};
     use http::{Request, Response};
     use http_body::Body;
     use http_body_util::{BodyExt, Empty, Full};
@@ -318,6 +376,24 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
 
     const BODY: &'static [u8] = b"Hello, world!";
+
+    #[test]
+    fn configuration() {
+        // One liner.
+        auto::Builder::new()
+            .http1()
+            .keep_alive(true)
+            .http2()
+            .keep_alive_interval(None);
+        //  .serve_connection(io, service);
+
+        // Using variable.
+        let mut builder = auto::Builder::new();
+
+        builder.http1().keep_alive(true);
+        builder.http2().keep_alive_interval(None);
+        // builder.serve_connection(io, service);
+    }
 
     #[cfg(not(miri))]
     #[tokio::test]
@@ -393,7 +469,7 @@ mod tests {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
                 tokio::task::spawn(async move {
-                    let _ = Builder::new()
+                    let _ = auto::Builder::new()
                         .serve_connection(stream, service_fn(hello))
                         .await;
                 });
