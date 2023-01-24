@@ -105,7 +105,7 @@ impl Http1Builder<'_> {
     ///
     /// Default is `false`.
     pub fn half_close(&mut self, val: bool) -> &mut Self {
-        self.inner.http1.http1_half_close(val);
+        self.inner.http1.half_close(val);
         self
     }
 
@@ -113,7 +113,7 @@ impl Http1Builder<'_> {
     ///
     /// Default is true.
     pub fn keep_alive(&mut self, val: bool) -> &mut Self {
-        self.inner.http1.http1_keep_alive(val);
+        self.inner.http1.keep_alive(val);
         self
     }
 
@@ -124,7 +124,7 @@ impl Http1Builder<'_> {
     ///
     /// Default is false.
     pub fn title_case_headers(&mut self, enabled: bool) -> &mut Self {
-        self.inner.http1.http1_title_case_headers(enabled);
+        self.inner.http1.title_case_headers(enabled);
         self
     }
 
@@ -142,7 +142,7 @@ impl Http1Builder<'_> {
     ///
     /// Default is false.
     pub fn preserve_header_case(&mut self, enabled: bool) -> &mut Self {
-        self.inner.http1.http1_preserve_header_case(enabled);
+        self.inner.http1.preserve_header_case(enabled);
         self
     }
 
@@ -151,7 +151,7 @@ impl Http1Builder<'_> {
     ///
     /// Default is None.
     pub fn header_read_timeout(&mut self, read_timeout: Duration) -> &mut Self {
-        self.inner.http1.http1_header_read_timeout(read_timeout);
+        self.inner.http1.header_read_timeout(read_timeout);
         self
     }
 
@@ -168,7 +168,7 @@ impl Http1Builder<'_> {
     /// Default is `auto`. In this mode hyper will try to guess which
     /// mode to use
     pub fn writev(&mut self, val: bool) -> &mut Self {
-        self.inner.http1.http1_writev(val);
+        self.inner.http1.writev(val);
         self
     }
 
@@ -240,7 +240,7 @@ impl Http2Builder<'_> {
     ///
     /// [spec]: https://http2.github.io/http2-spec/#SETTINGS_INITIAL_WINDOW_SIZE
     pub fn initial_stream_window_size(&mut self, sz: impl Into<Option<u32>>) -> &mut Self {
-        self.inner.http2.http2_initial_stream_window_size(sz);
+        self.inner.http2.initial_stream_window_size(sz);
         self
     }
 
@@ -250,7 +250,7 @@ impl Http2Builder<'_> {
     ///
     /// If not set, hyper will use a default.
     pub fn initial_connection_window_size(&mut self, sz: impl Into<Option<u32>>) -> &mut Self {
-        self.inner.http2.http2_initial_connection_window_size(sz);
+        self.inner.http2.initial_connection_window_size(sz);
         self
     }
 
@@ -260,7 +260,7 @@ impl Http2Builder<'_> {
     /// `http2_initial_stream_window_size` and
     /// `http2_initial_connection_window_size`.
     pub fn adaptive_window(&mut self, enabled: bool) -> &mut Self {
-        self.inner.http2.http2_adaptive_window(enabled);
+        self.inner.http2.adaptive_window(enabled);
         self
     }
 
@@ -270,7 +270,7 @@ impl Http2Builder<'_> {
     ///
     /// If not set, hyper will use a default.
     pub fn max_frame_size(&mut self, sz: impl Into<Option<u32>>) -> &mut Self {
-        self.inner.http2.http2_max_frame_size(sz);
+        self.inner.http2.max_frame_size(sz);
         self
     }
 
@@ -281,7 +281,7 @@ impl Http2Builder<'_> {
     ///
     /// [spec]: https://http2.github.io/http2-spec/#SETTINGS_MAX_CONCURRENT_STREAMS
     pub fn max_concurrent_streams(&mut self, max: impl Into<Option<u32>>) -> &mut Self {
-        self.inner.http2.http2_max_concurrent_streams(max);
+        self.inner.http2.max_concurrent_streams(max);
         self
     }
 
@@ -295,7 +295,7 @@ impl Http2Builder<'_> {
     /// # Cargo Feature
     ///
     pub fn keep_alive_interval(&mut self, interval: impl Into<Option<Duration>>) -> &mut Self {
-        self.inner.http2.http2_keep_alive_interval(interval);
+        self.inner.http2.keep_alive_interval(interval);
         self
     }
 
@@ -309,7 +309,7 @@ impl Http2Builder<'_> {
     /// # Cargo Feature
     ///
     pub fn keep_alive_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.inner.http2.http2_keep_alive_timeout(timeout);
+        self.inner.http2.keep_alive_timeout(timeout);
         self
     }
 
@@ -321,7 +321,7 @@ impl Http2Builder<'_> {
     ///
     /// The value must be no larger than `u32::MAX`.
     pub fn max_send_buf_size(&mut self, max: usize) -> &mut Self {
-        self.inner.http2.http2_max_send_buf_size(max);
+        self.inner.http2.max_send_buf_size(max);
         self
     }
 
@@ -329,7 +329,7 @@ impl Http2Builder<'_> {
     ///
     /// [extended CONNECT protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
     pub fn enable_connect_protocol(&mut self) -> &mut Self {
-        self.inner.http2.http2_enable_connect_protocol();
+        self.inner.http2.enable_connect_protocol();
         self
     }
 
@@ -337,7 +337,7 @@ impl Http2Builder<'_> {
     ///
     /// Default is currently ~16MB, but may change.
     pub fn max_header_list_size(&mut self, max: u32) -> &mut Self {
-        self.inner.http2.http2_max_header_list_size(max);
+        self.inner.http2.max_header_list_size(max);
         self
     }
 
