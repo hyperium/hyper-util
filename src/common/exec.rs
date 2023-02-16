@@ -19,6 +19,13 @@ pub enum Exec {
 // ===== impl Exec =====
 
 impl Exec {
+    pub(crate) fn new<E>(inner: E) -> Self
+    where
+        E: Executor<BoxSendFuture> + Send + Sync + 'static,
+    {
+        Exec::Executor(Arc::new(inner))
+    }
+
     pub(crate) fn execute<F>(&self, fut: F)
     where
         F: Future<Output = ()> + Send + 'static,

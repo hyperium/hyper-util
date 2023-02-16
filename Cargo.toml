@@ -15,7 +15,7 @@ edition = "2018"
 publish = false # no accidents while in dev
 
 [dependencies]
-hyper = "=1.0.0-rc.2"
+hyper = { git = "https://github.com/hyperium/hyper" } #"=1.0.0-rc.2"
 futures-channel = "0.3"
 futures-util = { version = "0.3", default-features = false }
 http = "0.2"
@@ -28,22 +28,34 @@ socket2 = "0.4"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["net", "rt", "time"] }
 tower-service = "0.3"
-tower = { version = "0.4", features = ["util"] }
+tower = { version = "0.4", features = ["make", "util"] }
 
 [dev-dependencies]
+bytes = "1"
+http-body-util = "0.1.0-rc.2"
 tokio = { version = "1", features = ["macros", "test-util"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
 pnet_datalink = "0.27.2"
 
 [features]
-# Shorthand to enable everything
-full = ["http1", "http2", "tcp", "runtime"]
+default = []
 
-runtime = []
+# Shorthand to enable everything
+full = ["client", "server", "http1", "http2", "tcp", "runtime"]
+
+client = ["hyper/client"]
+server = ["hyper/server"]
+
+http1 = ["hyper/http1"]
+http2 = ["hyper/http2"]
+
 tcp = []
-http1 = []
-http2 = []
+runtime = []
 
 # internal features used in CI
 __internal_happy_eyeballs_tests = []
+
+[[example]]
+name = "client"
+required-features = ["client", "http1", "tcp", "runtime"]
