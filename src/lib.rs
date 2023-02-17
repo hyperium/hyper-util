@@ -1,10 +1,8 @@
 #![deny(missing_docs)]
 
-//! hyper utilities
-pub use crate::error::{GenericError, Result};
+//! hyper-util
 
+#[cfg(feature = "client")]
 pub mod client;
-pub mod common;
+mod common;
 pub mod rt;
-
-mod error;

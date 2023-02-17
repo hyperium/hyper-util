@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::error::Error;
+use std::error::Error as StdError;
 use std::fmt::{self, Debug};
 use std::future::Future;
 use std::hash::Hash;
@@ -19,7 +19,6 @@ use tokio::time::{Duration, Instant, Interval};
 use futures_channel::oneshot;
 use tracing::{debug, trace};
 
-use super::client::Ver;
 use crate::common::{exec::Exec, ready};
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
@@ -46,6 +45,14 @@ pub trait Poolable: Unpin + Send + Sized + 'static {
 pub trait Key: Eq + Hash + Clone + Debug + Unpin + Send + 'static {}
 
 impl<T> Key for T where T: Eq + Hash + Clone + Debug + Unpin + Send + 'static {}
+
+/// A marker to identify what version a pooled connection is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
+pub enum Ver {
+    Auto,
+    Http2,
+}
 
 /// When checking out a pooled connection, it might be that the connection
 /// only supports a single reservation, or it might be usable for many.
@@ -576,28 +583,43 @@ pub struct Checkout<T, K: Key> {
 }
 
 #[derive(Debug)]
-pub struct CheckoutIsClosedError;
+#[non_exhaustive]
+pub enum Error {
+    PoolDisabled,
+    CheckoutNoLongerWanted,
+    CheckedOutClosedValue,
+}
 
-impl Error for CheckoutIsClosedError {}
-
-impl fmt::Display for CheckoutIsClosedError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("checked out connection was closed")
+impl Error {
+    pub(super) fn is_canceled(&self) -> bool {
+        matches!(self, Error::CheckedOutClosedValue)
     }
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Error::PoolDisabled => "pool is disabled",
+            Error::CheckedOutClosedValue => "checked out connection was closed",
+            Error::CheckoutNoLongerWanted => "request was canceled",
+        })
+    }
+}
+
+impl StdError for Error {}
 
 impl<T: Poolable, K: Key> Checkout<T, K> {
     fn poll_waiter(
         &mut self,
         cx: &mut task::Context<'_>,
-    ) -> Poll<Option<crate::Result<Pooled<T, K>>>> {
+    ) -> Poll<Option<Result<Pooled<T, K>, Error>>> {
         if let Some(mut rx) = self.waiter.take() {
             match Pin::new(&mut rx).poll(cx) {
                 Poll::Ready(Ok(value)) => {
                     if value.is_open() {
                         Poll::Ready(Some(Ok(self.pool.reuse(&self.key, value))))
                     } else {
-                        Poll::Ready(Some(Err(Box::new(crate::GenericError {}))))
+                        Poll::Ready(Some(Err(Error::CheckedOutClosedValue)))
                     }
                 }
                 Poll::Pending => {
@@ -605,7 +627,7 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
                     Poll::Pending
                 }
                 Poll::Ready(Err(_canceled)) => {
-                    Poll::Ready(Some(Err(Box::new(crate::GenericError {}))))
+                    Poll::Ready(Some(Err(Error::CheckoutNoLongerWanted)))
                 }
             }
         } else {
@@ -664,7 +686,7 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
 }
 
 impl<T: Poolable, K: Key> Future for Checkout<T, K> {
-    type Output = crate::Result<Pooled<T, K>>;
+    type Output = Result<Pooled<T, K>, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         if let Some(pooled) = ready!(self.poll_waiter(cx)?) {
@@ -674,7 +696,7 @@ impl<T: Poolable, K: Key> Future for Checkout<T, K> {
         if let Some(pooled) = self.checkout(cx) {
             Poll::Ready(Ok(pooled))
         } else if !self.pool.is_enabled() {
-            Poll::Ready(Err(Box::new(crate::GenericError {})))
+            Poll::Ready(Err(Error::PoolDisabled))
         } else {
             // There's a new waiter, already registered in self.checkout()
             debug_assert!(self.waiter.is_some());
