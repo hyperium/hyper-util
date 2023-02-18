@@ -452,6 +452,7 @@ where
         }
     }
 
+    #[cfg(any(feature = "http1", feature = "http2"))]
     fn connect_to(
         &self,
         pool_key: PoolKey,
@@ -512,37 +513,46 @@ where
 
                         Either::Left(Box::pin(async move {
                             let tx = if is_h2 {
-                                let (mut tx, conn) =
-                                    h2_builder.handshake(io).await.map_err(Error::tx)?;
-
-                                trace!(
-                                    "http2 handshake complete, spawning background dispatcher task"
-                                );
-                                executor.execute(
-                                    conn.map_err(|e| debug!("client connection error: {}", e))
-                                        .map(|_| ()),
-                                );
-
-                                // Wait for 'conn' to ready up before we
-                                // declare this tx as usable
-                                tx.ready().await.map_err(Error::tx)?;
-                                PoolTx::Http2(tx)
+                                #[cfg(feature = "http2")] {
+                                    let (mut tx, conn) =
+                                        h2_builder.handshake(io).await.map_err(Error::tx)?;
+    
+                                    trace!(
+                                        "http2 handshake complete, spawning background dispatcher task"
+                                    );
+                                    executor.execute(
+                                        conn.map_err(|e| debug!("client connection error: {}", e))
+                                            .map(|_| ()),
+                                    );
+    
+                                    // Wait for 'conn' to ready up before we
+                                    // declare this tx as usable
+                                    tx.ready().await.map_err(Error::tx)?;
+                                    PoolTx::Http2(tx)
+                                }
+                                #[cfg(not(feature = "http2"))]
+                                panic!("http2 feature is not enabled");
                             } else {
-                                let (mut tx, conn) =
-                                    h1_builder.handshake(io).await.map_err(Error::tx)?;
-
-                                trace!(
-                                    "http1 handshake complete, spawning background dispatcher task"
-                                );
-                                executor.execute(
-                                    conn.map_err(|e| debug!("client connection error: {}", e))
-                                        .map(|_| ()),
-                                );
-
-                                // Wait for 'conn' to ready up before we
-                                // declare this tx as usable
-                                tx.ready().await.map_err(Error::tx)?;
-                                PoolTx::Http1(tx)
+                                #[cfg(feature = "http1")] {
+                                    let (mut tx, conn) =
+                                        h1_builder.handshake(io).await.map_err(Error::tx)?;
+    
+                                    trace!(
+                                        "http1 handshake complete, spawning background dispatcher task"
+                                    );
+                                    executor.execute(
+                                        conn.map_err(|e| debug!("client connection error: {}", e))
+                                            .map(|_| ()),
+                                    );
+    
+                                    // Wait for 'conn' to ready up before we
+                                    // declare this tx as usable
+                                    tx.ready().await.map_err(Error::tx)?;
+                                    PoolTx::Http1(tx)
+                                }
+                                #[cfg(not(feature = "http1"))] {
+                                    panic!("http1 feature is not enabled");
+                                }
                             };
 
                             Ok(pool.pooled(
@@ -604,7 +614,9 @@ impl<C: Clone, B> Clone for Client<C, B> {
         Client {
             config: self.config.clone(),
             exec: self.exec.clone(),
+            #[cfg(feature = "http1")]
             h1_builder: self.h1_builder.clone(),
+            #[cfg(feature = "http2")]
             h2_builder: self.h2_builder.clone(),
             connector: self.connector.clone(),
             pool: self.pool.clone(),
@@ -913,7 +925,9 @@ fn is_schema_secure(uri: &Uri) -> bool {
 pub struct Builder {
     client_config: Config,
     exec: Exec,
+    #[cfg(feature = "http1")]
     h1_builder: hyper::client::conn::http1::Builder,
+    #[cfg(feature = "http2")]
     h2_builder: hyper::client::conn::http2::Builder,
     pool_config: pool::Config,
 }
@@ -932,7 +946,9 @@ impl Builder {
                 ver: Ver::Auto,
             },
             exec,
+            #[cfg(feature = "http1")]
             h1_builder: hyper::client::conn::http1::Builder::new(),
+            #[cfg(feature = "http2")]
             h2_builder: hyper::client::conn::http2::Builder::new(executor),
             pool_config: pool::Config {
                 idle_timeout: Some(Duration::from_secs(90)),
@@ -1356,7 +1372,9 @@ impl Builder {
         Client {
             config: self.client_config,
             exec: self.exec.clone(),
+            #[cfg(feature = "http1")]
             h1_builder: self.h1_builder.clone(),
+            #[cfg(feature = "http2")]
             h2_builder: self.h2_builder.clone(),
             connector,
             pool: pool::Pool::new(self.pool_config, &self.exec),
