@@ -101,12 +101,13 @@ impl Client<(), ()> {
     /// # Example
     ///
     /// ```
-    /// # #[cfg(feature  = "runtime")]
+    /// # #[cfg(feature = "runtime")]
     /// # fn run () {
     /// use std::time::Duration;
     /// use hyper::Client;
+    /// use hyper_util::rt::TokioExecutor;
     ///
-    /// let client = Client::builder()
+    /// let client = Client::builder(TokioExecutor::new())
     ///     .pool_idle_timeout(Duration::from_secs(30))
     ///     .http2_only(true)
     ///     .build_http();
@@ -141,7 +142,7 @@ where
     /// # Example
     ///
     /// ```
-    /// # #[cfg(feature  = "runtime")]
+    /// # #[cfg(feature = "runtime")]
     /// # fn run () {
     /// use hyper::{Client, Uri};
     ///
@@ -170,7 +171,7 @@ where
     /// # Example
     ///
     /// ```
-    /// # #[cfg(feature  = "runtime")]
+    /// # #[cfg(feature = "runtime")]
     /// # fn run () {
     /// use hyper::{Method, Client, Request};
     /// use http_body_util::Full;
@@ -894,12 +895,13 @@ fn is_schema_secure(uri: &Uri) -> bool {
 /// # Example
 ///
 /// ```
-/// # #[cfg(feature  = "runtime")]
+/// # #[cfg(feature = "runtime")]
 /// # fn run () {
 /// use std::time::Duration;
 /// use hyper::Client;
+/// use hyper_util::rt::TokioExecutor;
 ///
-/// let client = Client::builder()
+/// let client = Client::builder(TokioExecutor::new())
 ///     .pool_idle_timeout(Duration::from_secs(30))
 ///     .http2_only(true)
 ///     .build_http();
