@@ -516,7 +516,7 @@ where
                                 #[cfg(feature = "http2")] {
                                     let (mut tx, conn) =
                                         h2_builder.handshake(io).await.map_err(Error::tx)?;
-    
+
                                     trace!(
                                         "http2 handshake complete, spawning background dispatcher task"
                                     );
@@ -524,7 +524,7 @@ where
                                         conn.map_err(|e| debug!("client connection error: {}", e))
                                             .map(|_| ()),
                                     );
-    
+
                                     // Wait for 'conn' to ready up before we
                                     // declare this tx as usable
                                     tx.ready().await.map_err(Error::tx)?;
@@ -536,7 +536,7 @@ where
                                 #[cfg(feature = "http1")] {
                                     let (mut tx, conn) =
                                         h1_builder.handshake(io).await.map_err(Error::tx)?;
-    
+
                                     trace!(
                                         "http1 handshake complete, spawning background dispatcher task"
                                     );
@@ -544,7 +544,7 @@ where
                                         conn.map_err(|e| debug!("client connection error: {}", e))
                                             .map(|_| ()),
                                     );
-    
+
                                     // Wait for 'conn' to ready up before we
                                     // declare this tx as usable
                                     tx.ready().await.map_err(Error::tx)?;
