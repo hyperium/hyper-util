@@ -739,7 +739,7 @@ impl<B: Body + 'static> PoolClient<B> {
             PoolTx::Http2(ref mut tx) => Either::Right(tx.send_request(req)),
         }
         .map_err(|_| todo!());
-        
+
         #[cfg(feature = "http1")]
         #[cfg(not(feature = "http2"))]
         return match self.tx {
@@ -747,7 +747,7 @@ impl<B: Body + 'static> PoolClient<B> {
             PoolTx::Http1(ref mut tx) => tx.send_request(req),
         }
         .map_err(|_| todo!());
-        
+
         #[cfg(not(feature = "http1"))]
         #[cfg(feature = "http2")]
         return match self.tx {
