@@ -672,6 +672,7 @@ struct PoolClient<B> {
 }
 
 enum PoolTx<B> {
+    #[cfg(feature = "http1")]
     Http1(hyper::client::conn::http1::SendRequest<B>),
     #[cfg(feature = "http2")]
     Http2(hyper::client::conn::http2::SendRequest<B>),
@@ -680,6 +681,7 @@ enum PoolTx<B> {
 impl<B> PoolClient<B> {
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.tx {
+            #[cfg(feature = "http1")]
             PoolTx::Http1(ref mut tx) => tx.poll_ready(cx).map_err(|_| todo!()),
             #[cfg(feature = "http2")]
             PoolTx::Http2(_) => Poll::Ready(Ok(())),
@@ -692,6 +694,7 @@ impl<B> PoolClient<B> {
 
     fn is_http2(&self) -> bool {
         match self.tx {
+            #[cfg(feature = "http1")]
             PoolTx::Http1(_) => false,
             #[cfg(feature = "http2")]
             PoolTx::Http2(_) => true,
@@ -700,6 +703,7 @@ impl<B> PoolClient<B> {
 
     fn is_ready(&self) -> bool {
         match self.tx {
+            #[cfg(feature = "http1")]
             PoolTx::Http1(ref tx) => tx.is_ready(),
             #[cfg(feature = "http2")]
             PoolTx::Http2(ref tx) => tx.is_ready(),
@@ -708,6 +712,7 @@ impl<B> PoolClient<B> {
 
     fn is_closed(&self) -> bool {
         match self.tx {
+            #[cfg(feature = "http1")]
             PoolTx::Http1(ref tx) => tx.is_closed(),
             #[cfg(feature = "http2")]
             PoolTx::Http2(ref tx) => tx.is_closed(),
@@ -724,12 +729,10 @@ impl<B: Body + 'static> PoolClient<B> {
         B: Send,
     {
         match self.tx {
-            #[cfg(not(feature = "http2"))]
+            #[cfg(feature = "http1")]
             PoolTx::Http1(ref mut tx) => tx.send_request(req),
             #[cfg(feature = "http2")]
-            PoolTx::Http1(ref mut tx) => Either::Left(tx.send_request(req)),
-            #[cfg(feature = "http2")]
-            PoolTx::Http2(ref mut tx) => Either::Right(tx.send_request(req)),
+            PoolTx::Http2(ref mut tx) => tx.send_request(req),
         }
         .map_err(|_| todo!())
     }
@@ -764,6 +767,7 @@ where
 
     fn reserve(self) -> pool::Reservation<Self> {
         match self.tx {
+            #[cfg(feature = "http1")]
             PoolTx::Http1(tx) => pool::Reservation::Unique(PoolClient {
                 conn_info: self.conn_info,
                 tx: PoolTx::Http1(tx),
@@ -991,6 +995,8 @@ impl Builder {
     /// Note that setting this option unsets the `http1_max_buf_size` option.
     ///
     /// Default is an adaptive read buffer.
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub fn http1_read_buf_exact_size(&mut self, sz: usize) -> &mut Self {
         self.h1_builder.read_buf_exact_size(Some(sz));
         self
@@ -1034,6 +1040,8 @@ impl Builder {
     /// Default is false.
     ///
     /// [RFC 7230 Section 3.2.4.]: https://tools.ietf.org/html/rfc7230#section-3.2.4
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub fn http1_allow_spaces_after_header_name_in_responses(&mut self, val: bool) -> &mut Self {
         self.h1_builder
             .allow_spaces_after_header_name_in_responses(val);
@@ -1071,6 +1079,8 @@ impl Builder {
     /// Default is false.
     ///
     /// [RFC 7230 Section 3.2.4.]: https://tools.ietf.org/html/rfc7230#section-3.2.4
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub fn http1_allow_obsolete_multiline_headers_in_responses(&mut self, val: bool) -> &mut Self {
         self.h1_builder
             .allow_obsolete_multiline_headers_in_responses(val);
@@ -1101,6 +1111,8 @@ impl Builder {
     /// line in the input to resume parsing the rest of the headers. An error
     /// will be emitted nonetheless if it finds `\0` or a lone `\r` while
     /// looking for the next line.
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub fn http1_ignore_invalid_headers_in_responses(&mut self, val: bool) -> &mut Builder {
         self.h1_builder.ignore_invalid_headers_in_responses(val);
         self
@@ -1118,6 +1130,8 @@ impl Builder {
     ///
     /// Default is `auto`. In this mode hyper will try to guess which
     /// mode to use
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub fn http1_writev(&mut self, enabled: bool) -> &mut Builder {
         self.h1_builder.writev(enabled);
         self
@@ -1129,6 +1143,8 @@ impl Builder {
     /// Note that this setting does not affect HTTP/2.
     ///
     /// Default is false.
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub fn http1_title_case_headers(&mut self, val: bool) -> &mut Self {
         self.h1_builder.title_case_headers(val);
         self
@@ -1147,6 +1163,8 @@ impl Builder {
     /// Note that this setting does not affect HTTP/2.
     ///
     /// Default is false.
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub fn http1_preserve_header_case(&mut self, val: bool) -> &mut Self {
         self.h1_builder.preserve_header_case(val);
         self
@@ -1155,6 +1173,8 @@ impl Builder {
     /// Set whether HTTP/0.9 responses should be tolerated.
     ///
     /// Default is false.
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub fn http09_responses(&mut self, val: bool) -> &mut Self {
         self.h1_builder.http09_responses(val);
         self
