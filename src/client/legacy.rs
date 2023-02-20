@@ -679,7 +679,10 @@ enum PoolTx<B> {
 }
 
 impl<B> PoolClient<B> {
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
+    fn poll_ready(
+        &mut self,
+        #[allow(unused_variables)] cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), Error>> {
         match self.tx {
             #[cfg(feature = "http1")]
             PoolTx::Http1(ref mut tx) => tx.poll_ready(cx).map_err(|_| todo!()),
@@ -728,13 +731,30 @@ impl<B: Body + 'static> PoolClient<B> {
     where
         B: Send,
     {
-        match self.tx {
+        #[cfg(all(feature = "http1", feature = "http2"))]
+        return match self.tx {
+            #[cfg(feature = "http1")]
+            PoolTx::Http1(ref mut tx) => Either::Left(tx.send_request(req)),
+            #[cfg(feature = "http2")]
+            PoolTx::Http2(ref mut tx) => Either::Right(tx.send_request(req)),
+        }
+        .map_err(|_| todo!());
+        
+        #[cfg(feature = "http1")]
+        #[cfg(not(feature = "http2"))]
+        return match self.tx {
             #[cfg(feature = "http1")]
             PoolTx::Http1(ref mut tx) => tx.send_request(req),
+        }
+        .map_err(|_| todo!());
+        
+        #[cfg(not(feature = "http1"))]
+        #[cfg(feature = "http2")]
+        return match self.tx {
             #[cfg(feature = "http2")]
             PoolTx::Http2(ref mut tx) => tx.send_request(req),
         }
-        .map_err(|_| todo!())
+        .map_err(|_| todo!());
     }
     /*
     //TODO: can we re-introduce this somehow? Or must people use tower::retry?
@@ -748,7 +768,7 @@ impl<B: Body + 'static> PoolClient<B> {
         match self.tx {
             #[cfg(not(feature = "http2"))]
             PoolTx::Http1(ref mut tx) => tx.send_request_retryable(req),
-            #[cfg(feature = "http2")]
+            #[cfg(feature = "http1")]
             PoolTx::Http1(ref mut tx) => Either::Left(tx.send_request_retryable(req)),
             #[cfg(feature = "http2")]
             PoolTx::Http2(ref mut tx) => Either::Right(tx.send_request_retryable(req)),
