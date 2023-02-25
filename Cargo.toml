@@ -22,18 +22,18 @@ http = "0.2"
 http-body = "1.0.0-rc.2"
 bytes = "1"
 
-# Necessary to overcome msrv check of rust 1.49, as 1.15.0 failed
-once_cell = "=1.14"
+once_cell = "1.14"
 
 pin-project-lite = "0.2.4"
 socket2 = "0.4"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["net", "rt", "time"] }
 tower-service = "0.3"
-tower = { version = "0.4", features = ["util"] }
+tower = { version = "0.4", features = ["make", "util"] }
 
 [dev-dependencies]
-hyper = { version = "1.0.0-rc.2", features = ["full"] }
+hyper = { version = "1.0.0-rc.3", features = ["full"] }
+bytes = "1"
 http-body-util = "0.1.0-rc.2"
 tokio = { version = "1", features = ["macros", "test-util"] }
 tokio-test = "0.4"
@@ -42,11 +42,24 @@ tokio-test = "0.4"
 pnet_datalink = "0.27.2"
 
 [features]
-runtime = []
-tcp = []
+default = []
+
+# Shorthand to enable everything
+full = ["client", "server", "http1", "http2", "tcp", "runtime"]
+
+client = ["hyper/client"]
+server = ["hyper/server"]
+
 http1 = ["hyper/http1"]
 http2 = ["hyper/http2"]
+
+tcp = []
 auto = ["hyper/server", "http1", "http2"]
+runtime = []
 
 # internal features used in CI
 __internal_happy_eyeballs_tests = []
+
+[[example]]
+name = "client"
+required-features = ["client", "http1", "tcp", "runtime"]

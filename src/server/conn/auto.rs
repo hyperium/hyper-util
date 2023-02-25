@@ -1,6 +1,6 @@
 //! Http1 or Http2 connection.
 
-use crate::{common::rewind::Rewind, Result};
+use crate::common::rewind::Rewind;
 use bytes::Bytes;
 use http::{Request, Response};
 use http_body::Body;
@@ -12,6 +12,8 @@ use hyper::{
 };
 use std::{error::Error as StdError, marker::Unpin, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 

@@ -1,6 +1,8 @@
 //! HTTP client utilities
-#![allow(missing_docs)]
 
-pub mod client;
+//mod client;
 pub mod connect;
+#[cfg(any(feature = "http1", feature = "http2"))]
+pub mod legacy;
+#[doc(hidden)]
 pub mod pool;
