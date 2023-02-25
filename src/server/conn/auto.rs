@@ -1,12 +1,12 @@
 //! Http1 or Http2 connection.
 
-use crate::{common::rewind::Rewind, rt::tokio_executor::TokioExecutor, Result};
+use crate::{common::rewind::Rewind, Result};
 use bytes::Bytes;
 use http::{Request, Response};
 use http_body::Body;
 use hyper::{
     body::Incoming,
-    rt::Timer,
+    rt::{bounds::Http2ConnExec, Timer},
     server::conn::{http1, http2},
     service::Service,
 };
@@ -16,27 +16,41 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 /// Http1 or Http2 connection builder.
-pub struct Builder {
+pub struct Builder<E> {
     http1: http1::Builder,
-    http2: http2::Builder<TokioExecutor>,
+    http2: http2::Builder<E>,
 }
 
-impl Builder {
+impl<E> Builder<E> {
     /// Create a new auto connection builder.
-    pub fn new() -> Self {
+    ///
+    /// `executor` parameter should be a type that implements
+    /// [`Executor`](hyper::rt::Executor) trait.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use hyper_util::{
+    ///     rt::tokio_executor::TokioExecutor,
+    ///     server::conn::auto,
+    /// };
+    ///
+    /// auto::Builder::new(TokioExecutor::new());
+    /// ```
+    pub fn new(executor: E) -> Self {
         Self {
             http1: http1::Builder::new(),
-            http2: http2::Builder::new(TokioExecutor::new()),
+            http2: http2::Builder::new(executor),
         }
     }
 
     /// Http1 configuration.
-    pub fn http1(&mut self) -> Http1Builder<'_> {
+    pub fn http1(&mut self) -> Http1Builder<'_, E> {
         Http1Builder { inner: self }
     }
 
     /// Http2 configuration.
-    pub fn http2(&mut self) -> Http2Builder<'_> {
+    pub fn http2(&mut self) -> Http2Builder<'_, E> {
         Http2Builder { inner: self }
     }
 
@@ -50,6 +64,7 @@ impl Builder {
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: AsyncRead + AsyncWrite + Unpin + 'static,
+        E: Http2ConnExec<S::Future, B>,
     {
         enum Protocol {
             H1,
@@ -84,13 +99,13 @@ impl Builder {
 }
 
 /// Http1 part of builder.
-pub struct Http1Builder<'a> {
-    inner: &'a mut Builder,
+pub struct Http1Builder<'a, E> {
+    inner: &'a mut Builder<E>,
 }
 
-impl Http1Builder<'_> {
+impl<E> Http1Builder<'_, E> {
     /// Http2 configuration.
-    pub fn http2(&mut self) -> Http2Builder<'_> {
+    pub fn http2(&mut self) -> Http2Builder<'_, E> {
         Http2Builder {
             inner: &mut self.inner,
         }
@@ -213,19 +228,20 @@ impl Http1Builder<'_> {
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: AsyncRead + AsyncWrite + Unpin + 'static,
+        E: Http2ConnExec<S::Future, B>,
     {
         self.inner.serve_connection(io, service).await
     }
 }
 
 /// Http2 part of builder.
-pub struct Http2Builder<'a> {
-    inner: &'a mut Builder,
+pub struct Http2Builder<'a, E> {
+    inner: &'a mut Builder<E>,
 }
 
-impl Http2Builder<'_> {
+impl<E> Http2Builder<'_, E> {
     /// Http1 configuration.
-    pub fn http1(&mut self) -> Http1Builder<'_> {
+    pub fn http1(&mut self) -> Http1Builder<'_, E> {
         Http1Builder {
             inner: &mut self.inner,
         }
@@ -360,6 +376,7 @@ impl Http2Builder<'_> {
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: AsyncRead + AsyncWrite + Unpin + 'static,
+        E: Http2ConnExec<S::Future, B>,
     {
         self.inner.serve_connection(io, service).await
     }
@@ -380,7 +397,7 @@ mod tests {
     #[test]
     fn configuration() {
         // One liner.
-        auto::Builder::new()
+        auto::Builder::new(TokioExecutor::new())
             .http1()
             .keep_alive(true)
             .http2()
@@ -388,7 +405,7 @@ mod tests {
         //  .serve_connection(io, service);
 
         // Using variable.
-        let mut builder = auto::Builder::new();
+        let mut builder = auto::Builder::new(TokioExecutor::new());
 
         builder.http1().keep_alive(true);
         builder.http2().keep_alive_interval(None);
@@ -448,8 +465,7 @@ mod tests {
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
     {
         let stream = TcpStream::connect(addr).await.unwrap();
-        let (sender, connection) = client::conn::http2::Builder::new()
-            .executor(TokioExecutor::new())
+        let (sender, connection) = client::conn::http2::Builder::new(TokioExecutor::new())
             .handshake(stream)
             .await
             .unwrap();
@@ -469,7 +485,7 @@ mod tests {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
                 tokio::task::spawn(async move {
-                    let _ = auto::Builder::new()
+                    let _ = auto::Builder::new(TokioExecutor::new())
                         .serve_connection(stream, service_fn(hello))
                         .await;
                 });
