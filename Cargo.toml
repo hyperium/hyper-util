@@ -15,7 +15,7 @@ edition = "2018"
 publish = false # no accidents while in dev
 
 [dependencies]
-hyper = { git = "https://github.com/hyperium/hyper" } #"=1.0.0-rc.2"
+hyper = "=1.0.0-rc.3"
 futures-channel = "0.3"
 futures-util = { version = "0.3", default-features = false }
 http = "0.2"
