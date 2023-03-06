@@ -6,7 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-pub(crate) type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+pub type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 // Either the user provides an executor for background tasks, or we use
 // `tokio::spawn`.
@@ -19,7 +19,7 @@ pub enum Exec {
 // ===== impl Exec =====
 
 impl Exec {
-    pub(crate) fn new<E>(inner: E) -> Self
+    pub fn new<E>(inner: E) -> Self
     where
         E: Executor<BoxSendFuture> + Send + Sync + 'static,
     {
