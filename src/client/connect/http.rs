@@ -696,9 +696,9 @@ fn connect(
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     // That this only works for some socket types, particularly AF_INET sockets.
-    if config.interface.is_some() {
+    if let Some(interface) = &config.interface {
         socket
-            .bind_device(config.interface.as_ref().map(|iface| iface.as_bytes()))
+            .bind_device(Some(interface.as_bytes()))
             .map_err(ConnectError::m("tcp bind interface error"))?;
     }
 
