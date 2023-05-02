@@ -26,22 +26,13 @@ jobs:
     name: Check Style
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v1
+      - uses: actions/checkout@v3
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
           components: rustfmt
 
-      - name: cargo fmt --check
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+      - run: cargo fmt --all --check
 
   test:
     name: Test ${{ matrix.rust }} on ${{ matrix.os }}
@@ -61,20 +52,14 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v1
+      - uses: actions/checkout@v3
 
       - name: Install Rust (${{ matrix.rust }})
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true
 
-      - name: Test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
+      - run: cargo test
 
   msrv:
     name: Check MSRV (${{ matrix.rust }})
@@ -90,20 +75,14 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v1
+      - uses: actions/checkout@v3
 
       - name: Install Rust (${{ matrix.rust }})
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true
 
-      - name: Check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
+      - run: cargo check
 
   miri:
     name: Test with Miri
@@ -111,59 +90,38 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v1
+      - uses: actions/checkout@v3
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@nightly
         with:
-          profile: minimal
-          toolchain: nightly
           components: miri
-          override: true
 
       - name: Test
-        # Can't enable tcp feature since Miri does not support the tokio runtime
-        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
+        env:
+          # Can't enable tcp feature since Miri does not support the tokio runtime
+          MIRIFLAGS: "-Zmiri-disable-isolation"
+        run: cargo miri test
 
   features:
     name: features
     needs: [style]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v1
+      - uses: actions/checkout@v3
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
+      - uses: dtolnay/rust-toolchain@nightly
 
-      - name: Install cargo-hack
-        run: cargo install cargo-hack
+      - uses: taiki-e/install-action@cargo-hack
 
-      - name: check --feature-powerset
-        run: cargo hack check --feature-powerset --depth 2 -Z avoid-dev-deps
+      - run: cargo hack check --feature-powerset --depth 2 -Z avoid-dev-deps
 
   doc:
     name: Build docs
     needs: [style, test]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v1
+      - uses: actions/checkout@v3
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
+      - uses: dtolnay/rust-toolchain@nightly
 
-      - name: cargo doc
-        uses: actions-rs/cargo@v1
-        with:
-          command: rustdoc
-          args: -- --cfg docsrs -D broken-intra-doc-links
+      - run: cargo rustdoc -- --cfg docsrs -D broken-intra-doc-links
