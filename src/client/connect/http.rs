@@ -19,6 +19,7 @@ use tracing::{debug, trace, warn};
 
 use super::dns::{self, resolve, GaiResolver, Resolve};
 use super::{Connected, Connection};
+use crate::rt::TokioIo;
 
 /// A connector for the `http` scheme.
 ///
@@ -335,7 +336,7 @@ where
     R: Resolve + Clone + Send + Sync + 'static,
     R::Future: Send,
 {
-    type Response = TcpStream;
+    type Response = TokioIo<TcpStream>;
     type Error = ConnectError;
     type Future = HttpConnecting<R>;
 
@@ -402,7 +403,7 @@ impl<R> HttpConnector<R>
 where
     R: Resolve,
 {
-    async fn call_async(&mut self, dst: Uri) -> Result<TcpStream, ConnectError> {
+    async fn call_async(&mut self, dst: Uri) -> Result<TokioIo<TcpStream>, ConnectError> {
         let config = &self.config;
 
         let (host, port) = get_host_port(config, &dst)?;
@@ -433,14 +434,16 @@ where
             warn!("tcp set_nodelay error: {}", e);
         }
 
-        Ok(sock)
+        Ok(TokioIo::new(sock))
     }
 }
 
-impl Connection for TcpStream {
+impl Connection for TokioIo<TcpStream> {
     fn connected(&self) -> Connected {
         let connected = Connected::new();
-        if let (Ok(remote_addr), Ok(local_addr)) = (self.peer_addr(), self.local_addr()) {
+        if let (Ok(remote_addr), Ok(local_addr)) =
+            (self.inner().peer_addr(), self.inner().local_addr())
+        {
             connected.extra(HttpInfo {
                 remote_addr,
                 local_addr,
@@ -478,7 +481,7 @@ pin_project! {
     }
 }
 
-type ConnectResult = Result<TcpStream, ConnectError>;
+type ConnectResult = Result<TokioIo<TcpStream>, ConnectError>;
 type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
 impl<R: Resolve> Future for HttpConnecting<R> {

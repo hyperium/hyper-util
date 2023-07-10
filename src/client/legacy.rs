@@ -37,7 +37,7 @@ pub struct Client<C, B> {
     #[cfg(feature = "http1")]
     h1_builder: hyper::client::conn::http1::Builder,
     #[cfg(feature = "http2")]
-    h2_builder: hyper::client::conn::http2::Builder,
+    h2_builder: hyper::client::conn::http2::Builder<Exec>,
     pool: pool::Pool<PoolClient<B>, PoolKey>,
 }
 
@@ -128,7 +128,7 @@ impl Client<(), ()> {
 impl<C, B> Client<C, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
-    B: Body + Send + 'static,
+    B: Body + Send + 'static + Unpin,
     B::Data: Send,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
@@ -458,7 +458,8 @@ where
     fn connect_to(
         &self,
         pool_key: PoolKey,
-    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Unpin {
+    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin
+    {
         let executor = self.exec.clone();
         let pool = self.pool.clone();
         #[cfg(feature = "http1")]
@@ -574,7 +575,7 @@ where
 impl<C, B> tower_service::Service<Request<B>> for Client<C, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
-    B: Body + Send + 'static,
+    B: Body + Send + 'static + Unpin,
     B::Data: Send,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
@@ -594,7 +595,7 @@ where
 impl<C, B> tower_service::Service<Request<B>> for &'_ Client<C, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
-    B: Body + Send + 'static,
+    B: Body + Send + 'static + Unpin,
     B::Data: Send,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
@@ -955,7 +956,7 @@ pub struct Builder {
     #[cfg(feature = "http1")]
     h1_builder: hyper::client::conn::http1::Builder,
     #[cfg(feature = "http2")]
-    h2_builder: hyper::client::conn::http2::Builder,
+    h2_builder: hyper::client::conn::http2::Builder<Exec>,
     pool_config: pool::Config,
 }
 
@@ -965,18 +966,18 @@ impl Builder {
     where
         E: hyper::rt::Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
     {
-        let exec = Exec::new(executor.clone());
+        let exec = Exec::new(executor);
         Self {
             client_config: Config {
                 retry_canceled_requests: true,
                 set_host: true,
                 ver: Ver::Auto,
             },
-            exec,
+            exec: exec.clone(),
             #[cfg(feature = "http1")]
             h1_builder: hyper::client::conn::http1::Builder::new(),
             #[cfg(feature = "http2")]
-            h2_builder: hyper::client::conn::http2::Builder::new(executor),
+            h2_builder: hyper::client::conn::http2::Builder::new(exec),
             pool_config: pool::Config {
                 idle_timeout: Some(Duration::from_secs(90)),
                 max_idle_per_host: std::usize::MAX,
