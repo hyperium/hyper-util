@@ -23,7 +23,7 @@ http = "0.2"
 once_cell = "1.14"
 
 pin-project-lite = "0.2.4"
-socket2 = "0.4"
+socket2 = "0.5"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["net", "rt", "time"] }
 tower-service = "0.3"
