@@ -19,6 +19,7 @@ use tracing::{debug, trace, warn};
 
 use super::dns::{self, resolve, GaiResolver, Resolve};
 use super::{Connected, Connection};
+use crate::rt::TokioIo;
 
 /// A connector for the `http` scheme.
 ///
@@ -75,6 +76,7 @@ struct Config {
     reuse_address: bool,
     send_buffer_size: Option<usize>,
     recv_buffer_size: Option<usize>,
+    interface: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -165,6 +167,7 @@ impl<R> HttpConnector<R> {
                 reuse_address: false,
                 send_buffer_size: None,
                 recv_buffer_size: None,
+                interface: None,
             }),
             resolver,
         }
@@ -288,6 +291,25 @@ impl<R> HttpConnector<R> {
         self
     }
 
+    /// Sets the value for the `SO_BINDTODEVICE` option on this socket.
+    ///
+    /// If a socket is bound to an interface, only packets received from that particular
+    /// interface are processed by the socket. Note that this only works for some socket
+    /// types, particularly AF_INET sockets.
+    ///
+    /// On Linux it can be used to specify a [VRF], but the binary needs
+    /// to either have `CAP_NET_RAW` or to be run as root.
+    ///
+    /// This function is only available on Android、Fuchsia and Linux.
+    ///
+    /// [VRF]: https://www.kernel.org/doc/Documentation/networking/vrf.txt
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[inline]
+    pub fn set_interface<S: Into<String>>(&mut self, interface: S) -> &mut Self {
+        self.config_mut().interface = Some(interface.into());
+        self
+    }
+
     // private
 
     fn config_mut(&mut self) -> &mut Config {
@@ -314,7 +336,7 @@ where
     R: Resolve + Clone + Send + Sync + 'static,
     R::Future: Send,
 {
-    type Response = TcpStream;
+    type Response = TokioIo<TcpStream>;
     type Error = ConnectError;
     type Future = HttpConnecting<R>;
 
@@ -381,7 +403,7 @@ impl<R> HttpConnector<R>
 where
     R: Resolve,
 {
-    async fn call_async(&mut self, dst: Uri) -> Result<TcpStream, ConnectError> {
+    async fn call_async(&mut self, dst: Uri) -> Result<TokioIo<TcpStream>, ConnectError> {
         let config = &self.config;
 
         let (host, port) = get_host_port(config, &dst)?;
@@ -412,14 +434,16 @@ where
             warn!("tcp set_nodelay error: {}", e);
         }
 
-        Ok(sock)
+        Ok(TokioIo::new(sock))
     }
 }
 
-impl Connection for TcpStream {
+impl Connection for TokioIo<TcpStream> {
     fn connected(&self) -> Connected {
         let connected = Connected::new();
-        if let (Ok(remote_addr), Ok(local_addr)) = (self.peer_addr(), self.local_addr()) {
+        if let (Ok(remote_addr), Ok(local_addr)) =
+            (self.inner().peer_addr(), self.inner().local_addr())
+        {
             connected.extra(HttpInfo {
                 remote_addr,
                 local_addr,
@@ -457,7 +481,7 @@ pin_project! {
     }
 }
 
-type ConnectResult = Result<TcpStream, ConnectError>;
+type ConnectResult = Result<TokioIo<TcpStream>, ConnectError>;
 type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
 impl<R: Resolve> Future for HttpConnecting<R> {
@@ -673,6 +697,14 @@ fn connect(
         }
     }
 
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    // That this only works for some socket types, particularly AF_INET sockets.
+    if let Some(interface) = &config.interface {
+        socket
+            .bind_device(Some(interface.as_bytes()))
+            .map_err(ConnectError::m("tcp bind interface error"))?;
+    }
+
     bind_local_address(
         &socket,
         addr,
@@ -828,6 +860,14 @@ mod tests {
         (ip_v4, ip_v6)
     }
 
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    fn default_interface() -> Option<String> {
+        pnet_datalink::interfaces()
+            .iter()
+            .find(|e| e.is_up() && !e.is_loopback() && !e.ips.is_empty())
+            .map(|e| e.name.clone())
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_errors_missing_scheme() {
@@ -875,6 +915,57 @@ mod tests {
         if let Some(ip) = bind_ip_v6 {
             assert_client_ip(format!("http://[::1]:{}", port), server6, ip.into()).await;
         }
+    }
+
+    // NOTE: pnet crate that we use in this test doesn't compile on Windows
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[tokio::test]
+    #[ignore = "setting `SO_BINDTODEVICE` requires the `CAP_NET_RAW` capability (works when running as root)"]
+    async fn interface() {
+        use socket2::{Domain, Protocol, Socket, Type};
+        use std::net::TcpListener;
+
+        let interface: Option<String> = default_interface();
+
+        let server4 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server4.local_addr().unwrap().port();
+
+        let server6 = TcpListener::bind(&format!("[::1]:{}", port)).unwrap();
+
+        let assert_interface_name =
+            |dst: String,
+             server: TcpListener,
+             bind_iface: Option<String>,
+             expected_interface: Option<String>| async move {
+                let mut connector = HttpConnector::new();
+                if let Some(iface) = bind_iface {
+                    connector.set_interface(iface);
+                }
+
+                connect(connector, dst.parse().unwrap()).await.unwrap();
+                let domain = Domain::for_address(server.local_addr().unwrap());
+                let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).unwrap();
+
+                assert_eq!(
+                    socket.device().unwrap().as_deref(),
+                    expected_interface.as_deref().map(|val| val.as_bytes())
+                );
+            };
+
+        assert_interface_name(
+            format!("http://127.0.0.1:{}", port),
+            server4,
+            interface.clone(),
+            interface.clone(),
+        )
+        .await;
+        assert_interface_name(
+            format!("http://[::1]:{}", port),
+            server6,
+            interface.clone(),
+            interface.clone(),
+        )
+        .await;
     }
 
     #[test]
@@ -1005,6 +1096,7 @@ mod tests {
                         enforce_http: false,
                         send_buffer_size: None,
                         recv_buffer_size: None,
+                        interface: None,
                     };
                     let connecting_tcp = ConnectingTcp::new(dns::SocketAddrs::new(addrs), &cfg);
                     let start = Instant::now();

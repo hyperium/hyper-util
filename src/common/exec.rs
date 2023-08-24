@@ -54,3 +54,12 @@ impl fmt::Debug for Exec {
         f.debug_struct("Exec").finish()
     }
 }
+
+impl<F> hyper::rt::Executor<F> for Exec
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    fn execute(&self, fut: F) {
+        Exec::execute(self, fut);
+    }
+}
