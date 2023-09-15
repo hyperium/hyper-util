@@ -1,6 +1,6 @@
 //! Http1 or Http2 connection.
 
-use crate::common::rewind::Rewind;
+use crate::{common::rewind::Rewind, rt::TokioIo};
 use bytes::Bytes;
 use http::{Request, Response};
 use http_body::Body;
@@ -89,7 +89,7 @@ impl<E> Builder<E> {
             }
         };
 
-        let io = Rewind::new_buffered(io, Bytes::from(buf));
+        let io = TokioIo::new(Rewind::new_buffered(io, Bytes::from(buf)));
 
         match protocol {
             Protocol::H1 => self.http1.serve_connection(io, service).await?,
@@ -386,7 +386,10 @@ impl<E> Http2Builder<'_, E> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{rt::tokio_executor::TokioExecutor, server::conn::auto};
+    use crate::{
+        rt::{tokio_executor::TokioExecutor, TokioIo},
+        server::conn::auto,
+    };
     use http::{Request, Response};
     use http_body::Body;
     use http_body_util::{BodyExt, Empty, Full};
@@ -394,7 +397,7 @@ mod tests {
     use std::{convert::Infallible, error::Error as StdError, net::SocketAddr};
     use tokio::net::{TcpListener, TcpStream};
 
-    const BODY: &'static [u8] = b"Hello, world!";
+    const BODY: &[u8] = b"Hello, world!";
 
     #[test]
     fn configuration() {
@@ -452,7 +455,7 @@ mod tests {
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
     {
-        let stream = TcpStream::connect(addr).await.unwrap();
+        let stream = TokioIo::new(TcpStream::connect(addr).await.unwrap());
         let (sender, connection) = client::conn::http1::handshake(stream).await.unwrap();
 
         tokio::spawn(connection);
@@ -462,11 +465,11 @@ mod tests {
 
     async fn connect_h2<B>(addr: SocketAddr) -> client::conn::http2::SendRequest<B>
     where
-        B: Body + Send + 'static,
+        B: Body + Unpin + Send + 'static,
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
     {
-        let stream = TcpStream::connect(addr).await.unwrap();
+        let stream = TokioIo::new(TcpStream::connect(addr).await.unwrap());
         let (sender, connection) = client::conn::http2::Builder::new(TokioExecutor::new())
             .handshake(stream)
             .await
