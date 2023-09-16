@@ -14,6 +14,7 @@ pub mod exec;
 #[cfg(feature = "client")]
 mod lazy;
 pub(crate) mod never;
+pub(crate) mod rewind;
 #[cfg(feature = "client")]
 mod sync;
 
