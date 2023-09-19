@@ -1,10 +1,11 @@
 //! Http1 or Http2 connection.
 
+use futures_util::ready;
 use std::future::Future;
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
 use std::marker::PhantomPinned;
 use std::pin::Pin;
-use std::task::{ready, Context, Poll};
+use std::task::{Context, Poll};
 use std::{error::Error as StdError, marker::Unpin, time::Duration};
 
 use bytes::Bytes;
