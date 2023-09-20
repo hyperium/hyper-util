@@ -87,7 +87,7 @@ jobs:
           cargo update
           cargo update -p log --precise 0.4.18
 
-      - run: cargo check
+      - run: cargo check --features full
 
   miri:
     name: Test with Miri

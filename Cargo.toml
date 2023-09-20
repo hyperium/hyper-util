@@ -45,7 +45,7 @@ pnet_datalink = "0.27.2"
 default = []
 
 # Shorthand to enable everything
-full = ["client", "server", "http1", "http2", "tcp", "runtime"]
+full = ["client", "server", "http1", "http2", "tcp", "auto", "runtime"]
 
 client = ["hyper/client"]
 server = ["hyper/server"]
