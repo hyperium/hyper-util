@@ -86,6 +86,35 @@ impl<E> Builder<E> {
 
         Ok(())
     }
+
+    /// Bind a connection together with a [`Service`], with the ability to
+    /// handle HTTP upgrades. This requires that the IO object implements
+    /// `Send`.
+    pub async fn serve_connection_with_upgrades<I, S, B>(&self, io: I, service: S) -> Result<()>
+    where
+        S: Service<Request<Incoming>, Response = Response<B>> + Send,
+        S::Future: Send + 'static,
+        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B: Body + Send + 'static,
+        B::Data: Send,
+        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        E: Http2ConnExec<S::Future, B>,
+    {
+        let (version, io) = read_version(io).await?;
+        let io = TokioIo::new(io);
+        match version {
+            Version::H1 => {
+                self.http1
+                    .serve_connection(io, service)
+                    .with_upgrades()
+                    .await?
+            }
+            Version::H2 => self.http2.serve_connection(io, service).await?,
+        }
+
+        Ok(())
+    }
 }
 #[derive(Copy, Clone)]
 enum Version {
