@@ -26,7 +26,7 @@ jobs:
     name: Check Style
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -52,7 +52,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Rust (${{ matrix.rust }})
         uses: dtolnay/rust-toolchain@master
@@ -75,17 +75,12 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Rust (${{ matrix.rust }})
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-
-      - name: Make sure log v0.4.18 is used
-        run: |
-          cargo update
-          cargo update -p log --precise 0.4.18
 
       - run: cargo check --features full
 
@@ -95,7 +90,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@nightly
         with:
@@ -112,20 +107,20 @@ jobs:
     needs: [style]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
 
       - uses: taiki-e/install-action@cargo-hack
 
-      - run: cargo hack check --feature-powerset --depth 2 -Z avoid-dev-deps
+      - run: cargo hack --no-dev-deps check --feature-powerset --depth 2
 
   doc:
     name: Build docs
     needs: [style, test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@nightly
 
