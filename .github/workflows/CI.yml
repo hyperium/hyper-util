@@ -114,11 +114,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
 
       - uses: taiki-e/install-action@cargo-hack
 
-      - run: cargo hack check --feature-powerset --depth 2 -Z avoid-dev-deps
+      - run: cargo hack --no-dev-deps check --feature-powerset --depth 2
 
   doc:
     name: Build docs
