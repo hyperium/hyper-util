@@ -69,7 +69,7 @@ impl<E> Builder<E> {
     pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
     where
         S: Service<Request<Incoming>, Response = Response<B>> + Send,
-        S::Future: Send + 'static,
+        S::Future: 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
         B: Body + Send + 'static,
         B::Data: Send,
@@ -93,7 +93,7 @@ impl<E> Builder<E> {
     pub async fn serve_connection_with_upgrades<I, S, B>(&self, io: I, service: S) -> Result<()>
     where
         S: Service<Request<Incoming>, Response = Response<B>> + Send,
-        S::Future: Send + 'static,
+        S::Future: 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
         B: Body + Send + 'static,
         B::Data: Send,
