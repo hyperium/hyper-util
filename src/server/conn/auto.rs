@@ -87,6 +87,40 @@ impl<E> Builder<E> {
         Ok(())
     }
 
+    /// Bind a connection together with a [`tower_service::Service`].
+    #[cfg(all(
+        any(feature = "http1", feature = "http2"),
+        any(feature = "server", feature = "client")
+    ))]
+    pub async fn serve_connection_tower<I, S, B>(&self, io: I, service: S) -> Result<()>
+    where
+        S: tower_service::Service<Request<Incoming>, Response = Response<B>> + Clone + Send,
+        S::Future: 'static,
+        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B: Body + Send + 'static,
+        B::Data: Send,
+        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        I: AsyncRead + AsyncWrite + Unpin + 'static,
+        E: Http2ConnExec<crate::service::TowerToHyperServiceFuture<S, Request<Incoming>>, B>,
+    {
+        let (version, io) = read_version(io).await?;
+        let io = TokioIo::new(io);
+        match version {
+            Version::H1 => {
+                self.http1
+                    .serve_connection(io, crate::service::TowerToHyperService::new(service))
+                    .await?
+            }
+            Version::H2 => {
+                self.http2
+                    .serve_connection(io, crate::service::TowerToHyperService::new(service))
+                    .await?
+            }
+        }
+
+        Ok(())
+    }
+
     /// Bind a connection together with a [`Service`], with the ability to
     /// handle HTTP upgrades. This requires that the IO object implements
     /// `Send`.
@@ -111,6 +145,47 @@ impl<E> Builder<E> {
                     .await?
             }
             Version::H2 => self.http2.serve_connection(io, service).await?,
+        }
+
+        Ok(())
+    }
+
+    /// Bind a connection together with a [`tower_service::Service`], with the ability to
+    /// handle HTTP upgrades. This requires that the IO object implements
+    /// `Send`.
+    #[cfg(all(
+        any(feature = "http1", feature = "http2"),
+        any(feature = "server", feature = "client")
+    ))]
+    pub async fn serve_connection_with_upgrades_tower<I, S, B>(
+        &self,
+        io: I,
+        service: S,
+    ) -> Result<()>
+    where
+        S: tower_service::Service<Request<Incoming>, Response = Response<B>> + Clone + Send,
+        S::Future: 'static,
+        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B: Body + Send + 'static,
+        B::Data: Send,
+        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        E: Http2ConnExec<crate::service::TowerToHyperServiceFuture<S, Request<Incoming>>, B>,
+    {
+        let (version, io) = read_version(io).await?;
+        let io = TokioIo::new(io);
+        match version {
+            Version::H1 => {
+                self.http1
+                    .serve_connection(io, crate::service::TowerToHyperService::new(service))
+                    .with_upgrades()
+                    .await?
+            }
+            Version::H2 => {
+                self.http2
+                    .serve_connection(io, crate::service::TowerToHyperService::new(service))
+                    .await?
+            }
         }
 
         Ok(())

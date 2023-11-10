@@ -60,3 +60,7 @@ __internal_happy_eyeballs_tests = []
 [[example]]
 name = "client"
 required-features = ["client", "http1", "tcp", "runtime"]
+
+[[example]]
+name = "tower_server"
+required-features = ["server", "http1", "tcp", "runtime"]

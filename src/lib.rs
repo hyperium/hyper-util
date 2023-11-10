@@ -8,5 +8,10 @@ pub mod client;
 mod common;
 pub mod rt;
 pub mod server;
+#[cfg(all(
+    any(feature = "http1", feature = "http2"),
+    any(feature = "server", feature = "client")
+))]
+pub mod service;
 
 mod error;
