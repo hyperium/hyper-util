@@ -1413,15 +1413,16 @@ impl Builder {
         B: Body + Send,
         B::Data: Send,
     {
+        let exec = self.exec.clone();
         Client {
             config: self.client_config,
-            exec: self.exec.clone(),
+            exec: exec.clone(),
             #[cfg(feature = "http1")]
             h1_builder: self.h1_builder.clone(),
             #[cfg(feature = "http2")]
             h2_builder: self.h2_builder.clone(),
             connector,
-            pool: pool::Pool::new(self.pool_config, &self.exec),
+            pool: pool::Pool::new(self.pool_config, exec),
         }
     }
 }
