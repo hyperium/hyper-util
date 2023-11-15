@@ -1350,7 +1350,7 @@ impl Builder {
         self
     }
 
-    /// Provide a timer to execute background HTTP2 tasks
+    /// Provide a timer to be used for timeouts and intervals.
     ///
     /// See the documentation of [`h2::client::Builder::timer`] for more
     /// details.
