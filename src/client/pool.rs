@@ -20,7 +20,7 @@ use tokio::time::{Duration, Instant, Interval};
 use futures_channel::oneshot;
 use tracing::{debug, trace};
 
-use crate::common::{exec::Exec, ready};
+use crate::common::{exec, exec::Exec, ready};
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
@@ -121,7 +121,11 @@ impl Config {
 }
 
 impl<T, K: Key> Pool<T, K> {
-    pub fn new(config: Config, __exec: &Exec) -> Pool<T, K> {
+    pub fn new<E>(config: Config, executor: E) -> Pool<T, K>
+    where
+        E: hyper::rt::Executor<exec::BoxSendFuture> + Send + Sync + Clone + 'static,
+    {
+        let exec = Exec::new(executor);
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
                 connecting: HashSet::new(),
@@ -131,7 +135,7 @@ impl<T, K: Key> Pool<T, K> {
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::new(),
                 #[cfg(feature = "runtime")]
-                exec: __exec.clone(),
+                exec,
                 timeout: config.idle_timeout,
             })))
         } else {
@@ -830,7 +834,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
-    use crate::common::exec::Exec;
+    use crate::rt::tokio_executor::TokioExecutor;
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
     struct KeyImpl(http::uri::Scheme, http::uri::Authority);
@@ -876,7 +880,7 @@ mod tests {
                 idle_timeout: Some(Duration::from_millis(100)),
                 max_idle_per_host: max_idle,
             },
-            &Exec::Default,
+            TokioExecutor::new(),
         );
         pool.no_timer();
         pool
@@ -977,7 +981,7 @@ mod tests {
                 idle_timeout: Some(Duration::from_millis(10)),
                 max_idle_per_host: std::usize::MAX,
             },
-            &Exec::Default,
+            TokioExecutor::new(),
         );
 
         let key = host_key("foo");
