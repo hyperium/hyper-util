@@ -1,8 +1,7 @@
 //! Runtime utilities
 
-/// Implementation of [`hyper::rt::Executor`] that utilises [`tokio::spawn`].
-pub mod tokio_executor;
-mod tokio_io;
+#[cfg(feature = "tokio")]
+pub mod tokio;
 
-pub use tokio_executor::TokioExecutor;
-pub use tokio_io::TokioIo;
+#[cfg(feature = "tokio")]
+pub use self::tokio::{TokioExecutor, TokioIo};

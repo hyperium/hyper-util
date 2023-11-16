@@ -66,9 +66,12 @@ use std::fmt;
 
 use ::http::Extensions;
 
+#[cfg(feature = "tokio")]
 pub use self::http::{HttpConnector, HttpInfo};
 
+#[cfg(feature = "tokio")]
 pub mod dns;
+#[cfg(feature = "tokio")]
 mod http;
 
 pub use self::sealed::Connect;

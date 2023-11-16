@@ -12,10 +12,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
 use std::task::{self, Poll};
 
-#[cfg(not(feature = "runtime"))]
 use std::time::{Duration, Instant};
-#[cfg(feature = "runtime")]
-use tokio::time::{Duration, Instant, Interval};
 
 use futures_channel::oneshot;
 use tracing::{debug, trace};
@@ -97,9 +94,7 @@ struct PoolInner<T, K: Eq + Hash> {
     waiters: HashMap<K, VecDeque<oneshot::Sender<T>>>,
     // A oneshot channel is used to allow the interval to be notified when
     // the Pool completely drops. That way, the interval can cancel immediately.
-    #[cfg(feature = "runtime")]
     idle_interval_ref: Option<oneshot::Sender<Infallible>>,
-    #[cfg(feature = "runtime")]
     exec: Exec,
     timeout: Option<Duration>,
 }
@@ -130,11 +125,9 @@ impl<T, K: Key> Pool<T, K> {
             Some(Arc::new(Mutex::new(PoolInner {
                 connecting: HashSet::new(),
                 idle: HashMap::new(),
-                #[cfg(feature = "runtime")]
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::new(),
-                #[cfg(feature = "runtime")]
                 exec,
                 timeout: config.idle_timeout,
             })))
@@ -152,7 +145,6 @@ impl<T, K: Key> Pool<T, K> {
     #[cfg(test)]
     pub(super) fn no_timer(&self) {
         // Prevent an actual interval from being created for this pool...
-        #[cfg(feature = "runtime")]
         {
             let mut inner = self.inner.as_ref().unwrap().lock().unwrap();
             assert!(inner.idle_interval_ref.is_none(), "timer already spawned");
@@ -207,13 +199,11 @@ impl<T: Poolable, K: Key> Pool<T, K> {
     }
 
     /* Used in client/tests.rs...
-    #[cfg(feature = "runtime")]
     #[cfg(test)]
     pub(super) fn h1_key(&self, s: &str) -> Key {
         Arc::new(s.to_string())
     }
 
-    #[cfg(feature = "runtime")]
     #[cfg(test)]
     pub(super) fn idle_count(&self, key: &Key) -> usize {
         self
@@ -403,10 +393,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
                     });
                 }
 
-                #[cfg(feature = "runtime")]
-                {
-                    self.spawn_idle_interval(__pool_ref);
-                }
+                self.spawn_idle_interval(__pool_ref);
             }
             None => trace!("put; found waiter for {:?}", key),
         }
@@ -423,8 +410,9 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         self.waiters.remove(key);
     }
 
-    #[cfg(feature = "runtime")]
-    fn spawn_idle_interval(&mut self, pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
+    fn spawn_idle_interval(&mut self, _pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
+        // TODO
+        /*
         let (dur, rx) = {
             if self.idle_interval_ref.is_some() {
                 return;
@@ -446,6 +434,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         };
 
         self.exec.execute(interval);
+        */
     }
 }
 
@@ -466,7 +455,6 @@ impl<T, K: Eq + Hash> PoolInner<T, K> {
     }
 }
 
-#[cfg(feature = "runtime")]
 impl<T: Poolable, K: Key> PoolInner<T, K> {
     /// This should *only* be called by the IdleTask
     fn clear_expired(&mut self) {
@@ -766,7 +754,7 @@ impl Expiration {
     }
 }
 
-#[cfg(feature = "runtime")]
+/*
 pin_project_lite::pin_project! {
     struct IdleTask<T, K: Key> {
         #[pin]
@@ -780,7 +768,6 @@ pin_project_lite::pin_project! {
     }
 }
 
-#[cfg(feature = "runtime")]
 impl<T: Poolable + 'static, K: Key> Future for IdleTask<T, K> {
     type Output = ();
 
@@ -809,6 +796,7 @@ impl<T: Poolable + 'static, K: Key> Future for IdleTask<T, K> {
         }
     }
 }
+*/
 
 impl<T> WeakOpt<T> {
     fn none() -> Self {
@@ -932,7 +920,6 @@ mod tests {
         assert!(is_not_ready);
     }
 
-    #[cfg(feature = "runtime")]
     #[tokio::test]
     async fn test_pool_checkout_removes_expired() {
         let pool = pool_no_timer();
@@ -971,7 +958,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "runtime")]
     #[tokio::test]
     async fn test_pool_timer_removes_expired() {
         tokio::time::pause();
