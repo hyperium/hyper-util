@@ -1285,7 +1285,7 @@ impl Builder {
     ///
     /// # Cargo Feature
     ///
-    /// Requires the `runtime` cargo feature to be enabled.
+    /// Requires the `tokio` cargo feature to be enabled.
     #[cfg(feature = "tokio")]
     #[cfg(feature = "http2")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
@@ -1306,7 +1306,7 @@ impl Builder {
     ///
     /// # Cargo Feature
     ///
-    /// Requires the `runtime` cargo feature to be enabled.
+    /// Requires the `tokio` cargo feature to be enabled.
     #[cfg(feature = "tokio")]
     #[cfg(feature = "http2")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
@@ -1326,7 +1326,7 @@ impl Builder {
     ///
     /// # Cargo Feature
     ///
-    /// Requires the `runtime` cargo feature to be enabled.
+    /// Requires the `tokio` cargo feature to be enabled.
     #[cfg(feature = "tokio")]
     #[cfg(feature = "http2")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]

@@ -11,8 +11,7 @@ pub(crate) type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 // Either the user provides an executor for background tasks, or we use
 // `tokio::spawn`.
 #[derive(Clone)]
-pub enum Exec {
-    Default,
+pub(crate) enum Exec {
     Executor(Arc<dyn Executor<BoxSendFuture> + Send + Sync>),
 }
 
@@ -31,17 +30,6 @@ impl Exec {
         F: Future<Output = ()> + Send + 'static,
     {
         match *self {
-            Exec::Default => {
-                #[cfg(feature = "tcp")]
-                {
-                    tokio::task::spawn(fut);
-                }
-                #[cfg(not(feature = "tcp"))]
-                {
-                    // If no runtime, we need an executor!
-                    panic!("executor must be set")
-                }
-            }
             Exec::Executor(ref e) => {
                 e.execute(Box::pin(fut));
             }
