@@ -13,14 +13,13 @@ use http::{Request, Response};
 use http_body::Body;
 use hyper::{
     body::Incoming,
-    rt::{bounds::Http2ServerConnExec, Timer},
+    rt::{bounds::Http2ServerConnExec, Read, ReadBuf, Timer, Write},
     server::conn::{http1, http2},
     service::Service,
 };
 use pin_project_lite::pin_project;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use crate::{common::rewind::Rewind, rt::TokioIo};
+use crate::common::rewind::Rewind;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -74,11 +73,10 @@ impl<E> Builder<E> {
         B: Body + Send + 'static,
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
-        I: AsyncRead + AsyncWrite + Unpin + 'static,
+        I: Read + Write + Unpin + 'static,
         E: Http2ServerConnExec<S::Future, B>,
     {
         let (version, io) = read_version(io).await?;
-        let io = TokioIo::new(io);
         match version {
             Version::H1 => self.http1.serve_connection(io, service).await?,
             Version::H2 => self.http2.serve_connection(io, service).await?,
@@ -98,11 +96,10 @@ impl<E> Builder<E> {
         B: Body + Send + 'static,
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
-        I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        I: Read + Write + Unpin + Send + 'static,
         E: Http2ServerConnExec<S::Future, B>,
     {
         let (version, io) = read_version(io).await?;
-        let io = TokioIo::new(io);
         match version {
             Version::H1 => {
                 self.http1
@@ -123,12 +120,14 @@ enum Version {
 }
 async fn read_version<'a, A>(mut reader: A) -> IoResult<(Version, Rewind<A>)>
 where
-    A: AsyncRead + Unpin,
+    A: Read + Unpin,
 {
-    let mut buf = [0; 24];
+    use std::mem::MaybeUninit;
+
+    let mut buf = [MaybeUninit::uninit(); 24];
     let (version, buf) = ReadVersion {
         reader: &mut reader,
-        buf: ReadBuf::new(&mut buf),
+        buf: ReadBuf::uninit(&mut buf),
         version: Version::H1,
         _pin: PhantomPinned,
     }
@@ -148,21 +147,21 @@ pin_project! {
 
 impl<A> Future for ReadVersion<'_, A>
 where
-    A: AsyncRead + Unpin + ?Sized,
+    A: Read + Unpin + ?Sized,
 {
     type Output = IoResult<(Version, Vec<u8>)>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<IoResult<(Version, Vec<u8>)>> {
         let this = self.project();
 
-        while this.buf.remaining() != 0 {
+        while this.buf.filled().len() < H2_PREFACE.len() {
             if this.buf.filled() != &H2_PREFACE[0..this.buf.filled().len()] {
                 return Poll::Ready(Ok((*this.version, this.buf.filled().to_vec())));
             }
             // if our buffer is empty, then we need to read some data to continue.
-            let rem = this.buf.remaining();
-            ready!(Pin::new(&mut *this.reader).poll_read(cx, this.buf))?;
-            if this.buf.remaining() == rem {
+            let len = this.buf.filled().len();
+            ready!(Pin::new(&mut *this.reader).poll_read(cx, this.buf.unfilled()))?;
+            if this.buf.filled().len() == len {
                 return Err(IoError::new(ErrorKind::UnexpectedEof, "early eof")).into();
             }
         }
@@ -302,7 +301,7 @@ impl<E> Http1Builder<'_, E> {
         B: Body + Send + 'static,
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
-        I: AsyncRead + AsyncWrite + Unpin + 'static,
+        I: Read + Write + Unpin + 'static,
         E: Http2ServerConnExec<S::Future, B>,
     {
         self.inner.serve_connection(io, service).await
@@ -450,7 +449,7 @@ impl<E> Http2Builder<'_, E> {
         B: Body + Send + 'static,
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
-        I: AsyncRead + AsyncWrite + Unpin + 'static,
+        I: Read + Write + Unpin + 'static,
         E: Http2ServerConnExec<S::Future, B>,
     {
         self.inner.serve_connection(io, service).await
@@ -562,6 +561,7 @@ mod tests {
         tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
+                let stream = TokioIo::new(stream);
                 tokio::task::spawn(async move {
                     let _ = auto::Builder::new(TokioExecutor::new())
                         .serve_connection(stream, service_fn(hello))
