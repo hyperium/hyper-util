@@ -18,10 +18,10 @@ use hyper::rt::Timer;
 use hyper::{body::Body, Method, Request, Response, Uri, Version};
 use tracing::{debug, trace, warn};
 
+use super::super::pool::{self, Ver};
 #[cfg(feature = "tcp")]
 use super::connect::HttpConnector;
 use super::connect::{Alpn, Connect, Connected, Connection};
-use super::pool::{self, Ver};
 use crate::common::{lazy as hyper_lazy, Exec, Lazy, SyncWrapper};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;

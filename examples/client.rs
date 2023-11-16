@@ -2,7 +2,7 @@ use std::env;
 
 use http_body_util::Empty;
 use hyper::Request;
-use hyper_util::client::{connect::HttpConnector, legacy::Client};
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
