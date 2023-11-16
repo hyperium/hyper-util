@@ -10,7 +10,7 @@ macro_rules! ready {
 }
 
 pub(crate) use ready;
-pub mod exec;
+pub(crate) mod exec;
 #[cfg(feature = "client")]
 mod lazy;
 pub(crate) mod rewind;
