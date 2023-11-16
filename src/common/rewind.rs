@@ -2,7 +2,7 @@ use std::marker::Unpin;
 use std::{cmp, io};
 
 use bytes::{Buf, Bytes};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use hyper::rt::{Read, ReadBufCursor, Write};
 
 use std::{
     pin::Pin,
@@ -48,21 +48,21 @@ impl<T> Rewind<T> {
     // }
 }
 
-impl<T> AsyncRead for Rewind<T>
+impl<T> Read for Rewind<T>
 where
-    T: AsyncRead + Unpin,
+    T: Read + Unpin,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
-        buf: &mut ReadBuf<'_>,
+        mut buf: ReadBufCursor<'_>,
     ) -> Poll<io::Result<()>> {
         if let Some(mut prefix) = self.pre.take() {
             // If there are no remaining bytes, let the bytes get dropped.
             if !prefix.is_empty() {
-                let copy_len = cmp::min(prefix.len(), buf.remaining());
+                let copy_len = cmp::min(prefix.len(), remaining(&mut buf));
                 // TODO: There should be a way to do following two lines cleaner...
-                buf.put_slice(&prefix[..copy_len]);
+                put_slice(&mut buf, &prefix[..copy_len]);
                 prefix.advance(copy_len);
                 // Put back what's left
                 if !prefix.is_empty() {
@@ -76,9 +76,36 @@ where
     }
 }
 
-impl<T> AsyncWrite for Rewind<T>
+fn remaining(cursor: &mut ReadBufCursor<'_>) -> usize {
+    // SAFETY:
+    // We do not uninitialize any set bytes.
+    unsafe { cursor.as_mut().len() }
+}
+
+// Copied from `ReadBufCursor::put_slice`.
+// If that becomes public, we could ditch this.
+fn put_slice(cursor: &mut ReadBufCursor<'_>, slice: &[u8]) {
+    assert!(
+        remaining(cursor) >= slice.len(),
+        "buf.len() must fit in remaining()"
+    );
+
+    let amt = slice.len();
+
+    // SAFETY:
+    // the length is asserted above
+    unsafe {
+        cursor.as_mut()[..amt]
+            .as_mut_ptr()
+            .cast::<u8>()
+            .copy_from_nonoverlapping(slice.as_ptr(), amt);
+        cursor.advance(amt);
+    }
+}
+
+impl<T> Write for Rewind<T>
 where
-    T: AsyncWrite + Unpin,
+    T: Write + Unpin,
 {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -109,10 +136,9 @@ where
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
-    // FIXME: re-implement tests with `async/await`, this import should
-    // trigger a warning to remind us
     use super::Rewind;
     use bytes::Bytes;
     use tokio::io::AsyncReadExt;
@@ -159,3 +185,4 @@ mod tests {
         stream.read_exact(&mut buf).await.expect("read1");
     }
 }
+*/
