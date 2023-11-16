@@ -19,7 +19,7 @@ use hyper::{body::Body, Method, Request, Response, Uri, Version};
 use tracing::{debug, trace, warn};
 
 use super::super::pool::{self, Ver};
-#[cfg(feature = "tcp")]
+#[cfg(feature = "tokio")]
 use super::connect::HttpConnector;
 use super::connect::{Alpn, Connect, Connected, Connection};
 use crate::common::{lazy as hyper_lazy, Exec, Lazy, SyncWrapper};
@@ -103,7 +103,7 @@ impl Client<(), ()> {
     /// # Example
     ///
     /// ```
-    /// # #[cfg(feature = "runtime")]
+    /// # #[cfg(feature = "tokio")]
     /// # fn run () {
     /// use std::time::Duration;
     /// use hyper::Client;
@@ -144,7 +144,7 @@ where
     /// # Example
     ///
     /// ```
-    /// # #[cfg(feature = "runtime")]
+    /// # #[cfg(feature = "tokio")]
     /// # fn run () {
     /// use hyper::{Client, Uri};
     ///
@@ -173,7 +173,7 @@ where
     /// # Example
     ///
     /// ```
-    /// # #[cfg(feature = "runtime")]
+    /// # #[cfg(feature = "tokio")]
     /// # fn run () {
     /// use hyper::{Method, Client, Request};
     /// use http_body_util::Full;
@@ -934,7 +934,7 @@ fn is_schema_secure(uri: &Uri) -> bool {
 /// # Example
 ///
 /// ```
-/// # #[cfg(feature = "runtime")]
+/// # #[cfg(feature = "tokio")]
 /// # fn run () {
 /// use std::time::Duration;
 /// use hyper::Client;
@@ -1286,7 +1286,7 @@ impl Builder {
     /// # Cargo Feature
     ///
     /// Requires the `runtime` cargo feature to be enabled.
-    #[cfg(feature = "runtime")]
+    #[cfg(feature = "tokio")]
     #[cfg(feature = "http2")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_keep_alive_interval(
@@ -1307,7 +1307,7 @@ impl Builder {
     /// # Cargo Feature
     ///
     /// Requires the `runtime` cargo feature to be enabled.
-    #[cfg(feature = "runtime")]
+    #[cfg(feature = "tokio")]
     #[cfg(feature = "http2")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_keep_alive_timeout(&mut self, timeout: Duration) -> &mut Self {
@@ -1327,7 +1327,7 @@ impl Builder {
     /// # Cargo Feature
     ///
     /// Requires the `runtime` cargo feature to be enabled.
-    #[cfg(feature = "runtime")]
+    #[cfg(feature = "tokio")]
     #[cfg(feature = "http2")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_keep_alive_while_idle(&mut self, enabled: bool) -> &mut Self {
@@ -1410,7 +1410,7 @@ impl Builder {
     }
 
     /// Builder a client with this configuration and the default `HttpConnector`.
-    #[cfg(feature = "tcp")]
+    #[cfg(feature = "tokio")]
     pub fn build_http<B>(&self) -> Client<HttpConnector, B>
     where
         B: Body + Send,
