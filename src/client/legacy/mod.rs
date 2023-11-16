@@ -6,3 +6,7 @@ pub use client::Client;
 pub use client::Error;
 
 pub mod connect;
+#[doc(hidden)]
+// Publicly available, but just for legacy purposes. A better pool will be
+// designed.
+pub mod pool;

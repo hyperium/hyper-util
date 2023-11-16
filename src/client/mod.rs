@@ -3,5 +3,3 @@
 /// Legacy implementations of `connect` module and `Client`
 #[cfg(feature = "client-legacy")]
 pub mod legacy;
-#[doc(hidden)]
-pub mod pool;
