@@ -12,6 +12,9 @@ keywords = ["http", "hyper", "hyperium"]
 categories = ["network-programming", "web-programming::http-client", "web-programming::http-server"]
 edition = "2018"
 
+[package.metadata.docs.rs]
+features = ["full"]
+
 [dependencies]
 hyper = "1.0.0"
 futures-channel = "0.3"
