@@ -54,7 +54,7 @@ client = ["hyper/client"]
 client-legacy = ["client"]
 
 server = ["hyper/server"]
-server-auto = ["hyper/server", "http1", "http2"]
+server-auto = ["server", "http1", "http2"]
 
 http1 = ["hyper/http1"]
 http2 = ["hyper/http2"]
