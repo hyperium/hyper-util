@@ -67,11 +67,10 @@ impl<E> Builder<E> {
     /// Bind a connection together with a [`Service`].
     pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
     where
-        S: Service<Request<Incoming>, Response = Response<B>> + Send,
+        S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + Send + 'static,
-        B::Data: Send,
+        B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
         E: Http2ServerConnExec<S::Future, B>,
@@ -90,11 +89,10 @@ impl<E> Builder<E> {
     /// `Send`.
     pub async fn serve_connection_with_upgrades<I, S, B>(&self, io: I, service: S) -> Result<()>
     where
-        S: Service<Request<Incoming>, Response = Response<B>> + Send,
+        S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + Send + 'static,
-        B::Data: Send,
+        B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + Send + 'static,
         E: Http2ServerConnExec<S::Future, B>,
@@ -295,11 +293,10 @@ impl<E> Http1Builder<'_, E> {
     /// Bind a connection together with a [`Service`].
     pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
     where
-        S: Service<Request<Incoming>, Response = Response<B>> + Send,
-        S::Future: Send + 'static,
+        S: Service<Request<Incoming>, Response = Response<B>>,
+        S::Future: 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + Send + 'static,
-        B::Data: Send,
+        B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
         E: Http2ServerConnExec<S::Future, B>,
@@ -443,11 +440,10 @@ impl<E> Http2Builder<'_, E> {
     /// Bind a connection together with a [`Service`].
     pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
     where
-        S: Service<Request<Incoming>, Response = Response<B>> + Send,
-        S::Future: Send + 'static,
+        S: Service<Request<Incoming>, Response = Response<B>>,
+        S::Future: 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + Send + 'static,
-        B::Data: Send,
+        B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
         E: Http2ServerConnExec<S::Future, B>,
