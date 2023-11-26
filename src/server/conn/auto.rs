@@ -41,7 +41,7 @@ impl<E> Builder<E> {
     ///
     /// ```
     /// use hyper_util::{
-    ///     rt::tokio_executor::TokioExecutor,
+    ///     rt::TokioExecutor,
     ///     server::conn::auto,
     /// };
     ///
@@ -455,7 +455,7 @@ impl<E> Http2Builder<'_, E> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        rt::{tokio_executor::TokioExecutor, TokioIo},
+        rt::{TokioExecutor, TokioIo},
         server::conn::auto,
     };
     use http::{Request, Response};

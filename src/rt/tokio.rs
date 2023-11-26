@@ -192,7 +192,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::rt::tokio_executor::TokioExecutor;
+    use crate::rt::TokioExecutor;
     use hyper::rt::Executor;
     use tokio::sync::oneshot;
 
