@@ -106,14 +106,14 @@ impl Client<(), ()> {
     /// # #[cfg(feature = "tokio")]
     /// # fn run () {
     /// use std::time::Duration;
-    /// use hyper::Client;
+    /// use hyper_util::client::legacy::Client;
     /// use hyper_util::rt::TokioExecutor;
     ///
     /// let client = Client::builder(TokioExecutor::new())
     ///     .pool_idle_timeout(Duration::from_secs(30))
     ///     .http2_only(true)
     ///     .build_http();
-    /// # let infer: Client<_, ()> = client;
+    /// # let infer: Client<_, http_body_util::Full<bytes::Bytes>> = client;
     /// # drop(infer);
     /// # }
     /// # fn main() {}
@@ -146,9 +146,13 @@ where
     /// ```
     /// # #[cfg(feature = "tokio")]
     /// # fn run () {
-    /// use hyper::{Client, Uri};
+    /// use hyper::Uri;
+    /// use hyper_util::client::legacy::Client;
+    /// use hyper_util::rt::TokioExecutor;
+    /// use bytes::Bytes;
+    /// use http_body_util::Full;
     ///
-    /// let client = Client::new();
+    /// let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
     ///
     /// let future = client.get(Uri::from_static("http://httpbin.org/ip"));
     /// # }
@@ -175,12 +179,15 @@ where
     /// ```
     /// # #[cfg(feature = "tokio")]
     /// # fn run () {
-    /// use hyper::{Method, Client, Request};
+    /// use hyper::{Method, Request};
+    /// use hyper_util::client::legacy::Client;
     /// use http_body_util::Full;
+    /// use hyper_util::rt::TokioExecutor;
+    /// use bytes::Bytes;
     ///
-    /// let client = Client::new();
+    /// let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
     ///
-    /// let req = Request::builder()
+    /// let req: Request<Full<Bytes>> = Request::builder()
     ///     .method(Method::POST)
     ///     .uri("http://httpbin.org/post")
     ///     .body(Full::from("Hallo!"))
@@ -937,14 +944,14 @@ fn is_schema_secure(uri: &Uri) -> bool {
 /// # #[cfg(feature = "tokio")]
 /// # fn run () {
 /// use std::time::Duration;
-/// use hyper::Client;
+/// use hyper_util::client::legacy::Client;
 /// use hyper_util::rt::TokioExecutor;
 ///
 /// let client = Client::builder(TokioExecutor::new())
 ///     .pool_idle_timeout(Duration::from_secs(30))
 ///     .http2_only(true)
 ///     .build_http();
-/// # let infer: Client<_, _> = client;
+/// # let infer: Client<_, http_body_util::Full<bytes::Bytes>> = client;
 /// # drop(infer);
 /// # }
 /// # fn main() {}
