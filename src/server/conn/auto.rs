@@ -4,6 +4,7 @@ use futures_util::ready;
 use std::future::Future;
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
 use std::marker::PhantomPinned;
+use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::{error::Error as StdError, marker::Unpin, time::Duration};
@@ -116,26 +117,26 @@ enum Version {
     H1,
     H2,
 }
-async fn read_version<'a, A>(mut reader: A) -> IoResult<(Version, Rewind<A>)>
+
+fn read_version<A>(io: A) -> ReadVersion<A>
 where
     A: Read + Unpin,
 {
-    use std::mem::MaybeUninit;
-
-    let mut buf = [MaybeUninit::uninit(); 24];
-    let (version, buf) = ReadVersion {
-        reader: &mut reader,
-        buf: ReadBuf::uninit(&mut buf),
+    ReadVersion {
+        io: Some(io),
+        buf: [MaybeUninit::uninit(); 24],
+        filled: 0,
         version: Version::H1,
         _pin: PhantomPinned,
     }
-    .await?;
-    Ok((version, Rewind::new_buffered(reader, Bytes::from(buf))))
 }
+
 pin_project! {
-    struct ReadVersion<'a, A: ?Sized> {
-        reader: &'a mut A,
-        buf: ReadBuf<'a>,
+    struct ReadVersion<A> {
+        io: Option<A>,
+        buf: [MaybeUninit<u8>; 24],
+        // the amount of `buf` thats been filled
+        filled: usize,
         version: Version,
         // Make this future `!Unpin` for compatibility with async trait methods.
         #[pin]
@@ -143,30 +144,49 @@ pin_project! {
     }
 }
 
-impl<A> Future for ReadVersion<'_, A>
+impl<A> Future for ReadVersion<A>
 where
-    A: Read + Unpin + ?Sized,
+    A: Read + Unpin,
 {
-    type Output = IoResult<(Version, Vec<u8>)>;
+    type Output = IoResult<(Version, Rewind<A>)>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<IoResult<(Version, Vec<u8>)>> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
 
-        while this.buf.filled().len() < H2_PREFACE.len() {
-            if this.buf.filled() != &H2_PREFACE[0..this.buf.filled().len()] {
-                return Poll::Ready(Ok((*this.version, this.buf.filled().to_vec())));
-            }
-            // if our buffer is empty, then we need to read some data to continue.
-            let len = this.buf.filled().len();
-            ready!(Pin::new(&mut *this.reader).poll_read(cx, this.buf.unfilled()))?;
-            if this.buf.filled().len() == len {
-                return Err(IoError::new(ErrorKind::UnexpectedEof, "early eof")).into();
+        let mut buf = ReadBuf::uninit(&mut *this.buf);
+        // SAFETY: `this.filled` tracks how many bytes have been read (and thus initialized) and
+        // we're only advancing by that many.
+        unsafe {
+            buf.unfilled().advance(*this.filled);
+        };
+
+        while buf.filled().len() < H2_PREFACE.len() {
+            if buf.filled() != &H2_PREFACE[0..buf.filled().len()] {
+                let io = this.io.take().unwrap();
+                let buf = buf.filled().to_vec();
+                return Poll::Ready(Ok((
+                    *this.version,
+                    Rewind::new_buffered(io, Bytes::from(buf)),
+                )));
+            } else {
+                // if our buffer is empty, then we need to read some data to continue.
+                let len = buf.filled().len();
+                ready!(Pin::new(this.io.as_mut().unwrap()).poll_read(cx, buf.unfilled()))?;
+                *this.filled = buf.filled().len();
+                if buf.filled().len() == len {
+                    return Err(IoError::new(ErrorKind::UnexpectedEof, "early eof")).into();
+                }
             }
         }
-        if this.buf.filled() == H2_PREFACE {
+        if buf.filled() == H2_PREFACE {
             *this.version = Version::H2;
         }
-        return Poll::Ready(Ok((*this.version, this.buf.filled().to_vec())));
+        let io = this.io.take().unwrap();
+        let buf = buf.filled().to_vec();
+        Poll::Ready(Ok((
+            *this.version,
+            Rewind::new_buffered(io, Bytes::from(buf)),
+        )))
     }
 }
 
