@@ -1,6 +1,7 @@
 //! Http1 or Http2 connection.
 
 use futures_util::ready;
+use hyper::service::HttpService;
 use std::future::Future;
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
 use std::marker::PhantomPinned;
@@ -66,7 +67,7 @@ impl<E> Builder<E> {
     }
 
     /// Bind a connection together with a [`Service`].
-    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
+    pub fn serve_connection<I, S, B>(&self, io: I, service: S) -> Connection<'_, I, S, E>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
@@ -76,13 +77,13 @@ impl<E> Builder<E> {
         I: Read + Write + Unpin + 'static,
         E: Http2ServerConnExec<S::Future, B>,
     {
-        let (version, io) = read_version(io).await?;
-        match version {
-            Version::H1 => self.http1.serve_connection(io, service).await?,
-            Version::H2 => self.http2.serve_connection(io, service).await?,
+        Connection {
+            state: ConnFutureState::ReadVersion {
+                read_version: read_version(io),
+                builder: self,
+                service: Some(service),
+            },
         }
-
-        Ok(())
     }
 
     /// Bind a connection together with a [`Service`], with the ability to
@@ -118,9 +119,9 @@ enum Version {
     H2,
 }
 
-fn read_version<A>(io: A) -> ReadVersion<A>
+fn read_version<I>(io: I) -> ReadVersion<I>
 where
-    A: Read + Unpin,
+    I: Read + Unpin,
 {
     ReadVersion {
         io: Some(io),
@@ -132,8 +133,8 @@ where
 }
 
 pin_project! {
-    struct ReadVersion<A> {
-        io: Option<A>,
+    struct ReadVersion<I> {
+        io: Option<I>,
         buf: [MaybeUninit<u8>; 24],
         // the amount of `buf` thats been filled
         filled: usize,
@@ -144,11 +145,11 @@ pin_project! {
     }
 }
 
-impl<A> Future for ReadVersion<A>
+impl<I> Future for ReadVersion<I>
 where
-    A: Read + Unpin,
+    I: Read + Unpin,
 {
-    type Output = IoResult<(Version, Rewind<A>)>;
+    type Output = IoResult<(Version, Rewind<I>)>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
@@ -187,6 +188,110 @@ where
             *this.version,
             Rewind::new_buffered(io, Bytes::from(buf)),
         )))
+    }
+}
+
+pin_project! {
+    /// TODO
+    pub struct Connection<'a, I, S, E>
+    where
+        S: HttpService<Incoming>,
+    {
+        #[pin]
+        state: ConnFutureState<'a, I, S, E>,
+    }
+}
+
+pin_project! {
+    #[project = ConnFutureStateProj]
+    enum ConnFutureState<'a, I, S, E>
+    where
+        S: HttpService<Incoming>,
+    {
+        ReadVersion {
+            #[pin]
+            read_version: ReadVersion<I>,
+            builder: &'a Builder<E>,
+            service: Option<S>,
+        },
+        H1 {
+            #[pin]
+            conn: hyper::server::conn::http1::Connection<Rewind<I>, S>,
+        },
+        H1WithUpgrades {
+            // can't name this type :(
+            #[pin]
+            conn: UpgradeableConnection<Rewind<I>, S>,
+        },
+        H2 {
+            #[pin]
+            conn: hyper::server::conn::http2::Connection<Rewind<I>, S, E>,
+        },
+    }
+}
+
+impl<I, S, E, B> Connection<'_, I, S, E>
+where
+    S: HttpService<Incoming, ResBody = B>,
+    S::Error: Into<Box<dyn StdError + Send + Sync>>,
+    I: Read + Write + Unpin,
+    B: Body + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    E: Http2ServerConnExec<S::Future, B>,
+{
+    /// TODO
+    pub fn graceful_shutdown(self: Pin<&mut Self>) {
+        match self.project().state.project() {
+            ConnFutureStateProj::ReadVersion { .. } => {}
+            ConnFutureStateProj::H1 { conn } => conn.graceful_shutdown(),
+            ConnFutureStateProj::H2 { conn } => conn.graceful_shutdown(),
+        }
+    }
+}
+
+impl<I, S, E, B> Future for Connection<'_, I, S, E>
+where
+    S: Service<Request<Incoming>, Response = Response<B>>,
+    S::Future: 'static,
+    S::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B: Body + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    I: Read + Write + Unpin + 'static,
+    E: Http2ServerConnExec<S::Future, B>,
+{
+    type Output = Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            let mut this = self.as_mut().project();
+
+            match this.state.as_mut().project() {
+                ConnFutureStateProj::ReadVersion {
+                    read_version,
+                    builder,
+                    service,
+                } => {
+                    let (version, io) = ready!(read_version.poll(cx))?;
+                    let service = service.take().unwrap();
+                    match version {
+                        Version::H1 => {
+                            let conn = builder.http1.serve_connection(io, service);
+                            this.state.set(ConnFutureState::H1 { conn });
+                        }
+                        Version::H2 => {
+                            let conn = builder.http2.serve_connection(io, service);
+                            this.state.set(ConnFutureState::H2 { conn });
+                        }
+                    }
+                }
+                ConnFutureStateProj::H1 { conn } => {
+                    return conn.poll(cx).map_err(Into::into);
+                }
+                ConnFutureStateProj::H2 { conn } => {
+                    return conn.poll(cx).map_err(Into::into);
+                }
+            }
+        }
     }
 }
 
