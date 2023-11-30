@@ -1,3 +1,9 @@
+# 0.1.2 (2023-11-30)
+
+### Added
+
+- Exposed `client::legacy::Builder`.
+
 # 0.1.1 (2023-11-17)
 
 ### Added
