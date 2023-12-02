@@ -78,7 +78,7 @@ impl<E> Builder<E> {
         E: Http2ServerConnExec<S::Future, B>,
     {
         Connection {
-            state: ConnFutureState::ReadVersion {
+            state: ConnState::ReadVersion {
                 read_version: read_version(io),
                 builder: self,
                 service: Some(service),
@@ -89,7 +89,7 @@ impl<E> Builder<E> {
     /// Bind a connection together with a [`Service`], with the ability to
     /// handle HTTP upgrades. This requires that the IO object implements
     /// `Send`.
-    pub async fn serve_connection_with_upgrades<I, S, B>(&self, io: I, service: S) -> Result<()>
+    pub fn serve_connection_with_upgrades<I, S, B>(&self, io: I, service: S) -> UpgradeableConnection<'_, I, S, E>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
@@ -99,18 +99,13 @@ impl<E> Builder<E> {
         I: Read + Write + Unpin + Send + 'static,
         E: Http2ServerConnExec<S::Future, B>,
     {
-        let (version, io) = read_version(io).await?;
-        match version {
-            Version::H1 => {
-                self.http1
-                    .serve_connection(io, service)
-                    .with_upgrades()
-                    .await?
-            }
-            Version::H2 => self.http2.serve_connection(io, service).await?,
+        UpgradeableConnection {
+            state: UpgradeableConnState::ReadVersion {
+                read_version: read_version(io),
+                builder: self,
+                service: Some(service),
+            },
         }
-
-        Ok(())
     }
 }
 #[derive(Copy, Clone)]
@@ -192,19 +187,19 @@ where
 }
 
 pin_project! {
-    /// TODO
+    /// Connection future.
     pub struct Connection<'a, I, S, E>
     where
         S: HttpService<Incoming>,
     {
         #[pin]
-        state: ConnFutureState<'a, I, S, E>,
+        state: ConnState<'a, I, S, E>,
     }
 }
 
 pin_project! {
-    #[project = ConnFutureStateProj]
-    enum ConnFutureState<'a, I, S, E>
+    #[project = ConnStateProj]
+    enum ConnState<'a, I, S, E>
     where
         S: HttpService<Incoming>,
     {
@@ -217,11 +212,6 @@ pin_project! {
         H1 {
             #[pin]
             conn: hyper::server::conn::http1::Connection<Rewind<I>, S>,
-        },
-        H1WithUpgrades {
-            // can't name this type :(
-            #[pin]
-            conn: UpgradeableConnection<Rewind<I>, S>,
         },
         H2 {
             #[pin]
@@ -239,12 +229,19 @@ where
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
     E: Http2ServerConnExec<S::Future, B>,
 {
-    /// TODO
+    /// Start a graceful shutdown process for this connection.
+    ///
+    /// This `Connection` should continue to be polled until shutdown can finish.
+    ///
+    /// # Note
+    ///
+    /// This should only be called while the `Connection` future is still pending. If called after
+    /// `Connection::poll` has resolved, this does nothing.
     pub fn graceful_shutdown(self: Pin<&mut Self>) {
         match self.project().state.project() {
-            ConnFutureStateProj::ReadVersion { .. } => {}
-            ConnFutureStateProj::H1 { conn } => conn.graceful_shutdown(),
-            ConnFutureStateProj::H2 { conn } => conn.graceful_shutdown(),
+            ConnStateProj::ReadVersion { .. } => {}
+            ConnStateProj::H1 { conn } => conn.graceful_shutdown(),
+            ConnStateProj::H2 { conn } => conn.graceful_shutdown(),
         }
     }
 }
@@ -266,7 +263,7 @@ where
             let mut this = self.as_mut().project();
 
             match this.state.as_mut().project() {
-                ConnFutureStateProj::ReadVersion {
+                ConnStateProj::ReadVersion {
                     read_version,
                     builder,
                     service,
@@ -276,18 +273,124 @@ where
                     match version {
                         Version::H1 => {
                             let conn = builder.http1.serve_connection(io, service);
-                            this.state.set(ConnFutureState::H1 { conn });
+                            this.state.set(ConnState::H1 { conn });
                         }
                         Version::H2 => {
                             let conn = builder.http2.serve_connection(io, service);
-                            this.state.set(ConnFutureState::H2 { conn });
+                            this.state.set(ConnState::H2 { conn });
                         }
                     }
                 }
-                ConnFutureStateProj::H1 { conn } => {
+                ConnStateProj::H1 { conn } => {
                     return conn.poll(cx).map_err(Into::into);
                 }
-                ConnFutureStateProj::H2 { conn } => {
+                ConnStateProj::H2 { conn } => {
+                    return conn.poll(cx).map_err(Into::into);
+                }
+            }
+        }
+    }
+}
+
+pin_project! {
+    /// Connection future.
+    pub struct UpgradeableConnection<'a, I, S, E>
+    where
+        S: HttpService<Incoming>,
+    {
+        #[pin]
+        state: UpgradeableConnState<'a, I, S, E>,
+    }
+}
+
+pin_project! {
+    #[project = UpgradeableConnStateProj]
+    enum UpgradeableConnState<'a, I, S, E>
+    where
+        S: HttpService<Incoming>,
+    {
+        ReadVersion {
+            #[pin]
+            read_version: ReadVersion<I>,
+            builder: &'a Builder<E>,
+            service: Option<S>,
+        },
+        H1 {
+            #[pin]
+            conn: hyper::server::conn::http1::UpgradeableConnection<Rewind<I>, S>,
+        },
+        H2 {
+            #[pin]
+            conn: hyper::server::conn::http2::Connection<Rewind<I>, S, E>,
+        },
+    }
+}
+
+impl<I, S, E, B> UpgradeableConnection<'_, I, S, E>
+where
+    S: HttpService<Incoming, ResBody = B>,
+    S::Error: Into<Box<dyn StdError + Send + Sync>>,
+    I: Read + Write + Unpin,
+    B: Body + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    E: Http2ServerConnExec<S::Future, B>,
+{
+    /// Start a graceful shutdown process for this connection.
+    ///
+    /// This `UpgradeableConnection` should continue to be polled until shutdown can finish.
+    ///
+    /// # Note
+    ///
+    /// This should only be called while the `Connection` future is still nothing. pending. If
+    /// called after `UpgradeableConnection::poll` has resolved, this does nothing.
+    pub fn graceful_shutdown(self: Pin<&mut Self>) {
+        match self.project().state.project() {
+            UpgradeableConnStateProj::ReadVersion { .. } => {}
+            UpgradeableConnStateProj::H1 { conn } => conn.graceful_shutdown(),
+            UpgradeableConnStateProj::H2 { conn } => conn.graceful_shutdown(),
+        }
+    }
+}
+
+impl<I, S, E, B> Future for UpgradeableConnection<'_, I, S, E>
+where
+    S: Service<Request<Incoming>, Response = Response<B>>,
+    S::Future: 'static,
+    S::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B: Body + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    I: Read + Write + Unpin + Send + 'static,
+    E: Http2ServerConnExec<S::Future, B>,
+{
+    type Output = Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            let mut this = self.as_mut().project();
+
+            match this.state.as_mut().project() {
+                UpgradeableConnStateProj::ReadVersion {
+                    read_version,
+                    builder,
+                    service,
+                } => {
+                    let (version, io) = ready!(read_version.poll(cx))?;
+                    let service = service.take().unwrap();
+                    match version {
+                        Version::H1 => {
+                            let conn = builder.http1.serve_connection(io, service).with_upgrades();
+                            this.state.set(UpgradeableConnState::H1 { conn });
+                        }
+                        Version::H2 => {
+                            let conn = builder.http2.serve_connection(io, service);
+                            this.state.set(UpgradeableConnState::H2 { conn });
+                        }
+                    }
+                }
+                UpgradeableConnStateProj::H1 { conn } => {
+                    return conn.poll(cx).map_err(Into::into);
+                }
+                UpgradeableConnStateProj::H2 { conn } => {
                     return conn.poll(cx).map_err(Into::into);
                 }
             }
