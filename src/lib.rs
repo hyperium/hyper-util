@@ -6,6 +6,7 @@
 //! This crate is less-stable than [`hyper`](https://docs.rs/hyper). However,
 //! does respect Rust's semantic version regarding breaking changes.
 
+mod body;
 #[cfg(feature = "client")]
 pub mod client;
 mod common;
@@ -19,3 +20,5 @@ pub mod server;
 pub mod service;
 
 mod error;
+
+pub use body::Body;
