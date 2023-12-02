@@ -89,7 +89,11 @@ impl<E> Builder<E> {
     /// Bind a connection together with a [`Service`], with the ability to
     /// handle HTTP upgrades. This requires that the IO object implements
     /// `Send`.
-    pub fn serve_connection_with_upgrades<I, S, B>(&self, io: I, service: S) -> UpgradeableConnection<'_, I, S, E>
+    pub fn serve_connection_with_upgrades<I, S, B>(
+        &self,
+        io: I,
+        service: S,
+    ) -> UpgradeableConnection<'_, I, S, E>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
