@@ -26,6 +26,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 /// Http1 or Http2 connection builder.
+#[derive(Clone, Debug)]
 pub struct Builder<E> {
     http1: http1::Builder,
     http2: http2::Builder<E>,
