@@ -246,7 +246,7 @@ impl Future for TokioSleep {
 impl Sleep for TokioSleep {}
 
 impl TokioSleep {
-    pub fn reset(self: Pin<&mut Self>, deadline: Instant) {
+    fn reset(self: Pin<&mut Self>, deadline: Instant) {
         self.project().inner.as_mut().reset(deadline.into());
     }
 }
