@@ -552,7 +552,8 @@ where
                                         "http1 handshake complete, spawning background dispatcher task"
                                     );
                                     executor.execute(
-                                        conn.map_err(|e| debug!("client connection error: {}", e))
+                                        conn.with_upgrades()
+                                            .map_err(|e| debug!("client connection error: {}", e))
                                             .map(|_| ()),
                                     );
 
