@@ -4,4 +4,4 @@
 pub mod tokio;
 
 #[cfg(feature = "tokio")]
-pub use self::tokio::{TokioExecutor, TokioIo};
+pub use self::tokio::{TokioExecutor, TokioIo, TokioTimer};
