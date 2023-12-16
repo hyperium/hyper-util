@@ -13,6 +13,7 @@ pub mod rt;
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(all(
+    feature = "service",
     any(feature = "http1", feature = "http2"),
     any(feature = "server", feature = "client")
 ))]
