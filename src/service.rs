@@ -9,10 +9,6 @@ use std::{
 use tower::{util::Oneshot, ServiceExt};
 
 /// A tower service converted into a hyper service.
-#[cfg(all(
-    any(feature = "http1", feature = "http2"),
-    any(feature = "server", feature = "client")
-))]
 #[derive(Debug, Copy, Clone)]
 pub struct TowerToHyperService<S> {
     service: S,
@@ -44,10 +40,6 @@ where
 
 pin_project! {
     /// Response future for [`TowerToHyperService`].
-    #[cfg(all(
-        any(feature = "http1", feature = "http2"),
-        any(feature = "server", feature = "client")
-    ))]
     pub struct TowerToHyperServiceFuture<S, R>
     where
         S: tower_service::Service<R>,
