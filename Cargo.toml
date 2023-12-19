@@ -17,7 +17,7 @@ features = ["full"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-hyper = "1.0.0"
+hyper = "1.1.0"
 futures-channel = "0.3"
 futures-util = { version = "0.3.16", default-features = false }
 http = "1.0"
@@ -31,7 +31,7 @@ tower-service = "0.3"
 tower = { version = "0.4.1", features = ["make", "util"] }
 
 [dev-dependencies]
-hyper = { version = "1.0.0", features = ["full"] }
+hyper = { version = "1.1.0", features = ["full"] }
 bytes = "1"
 http-body-util = "0.1.0"
 tokio = { version = "1", features = ["macros", "test-util"] }
@@ -71,6 +71,3 @@ __internal_happy_eyeballs_tests = []
 [[example]]
 name = "client"
 required-features = ["client-legacy", "http1", "tokio"]
-
-[patch.crates-io]
-hyper = { git = "https://github.com/hyperium/hyper", rev = "cf68ea902749e" }
