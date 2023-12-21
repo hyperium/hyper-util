@@ -597,7 +597,7 @@ impl<E> Http2Builder<'_, E> {
     /// Sets the [`SETTINGS_MAX_CONCURRENT_STREAMS`][spec] option for HTTP2
     /// connections.
     ///
-    /// Default is no limit (`std::u32::MAX`). Passing `None` will do nothing.
+    /// Default is 200. Passing `None` will remove any limit.
     ///
     /// [spec]: https://http2.github.io/http2-spec/#SETTINGS_MAX_CONCURRENT_STREAMS
     pub fn max_concurrent_streams(&mut self, max: impl Into<Option<u32>>) -> &mut Self {
