@@ -382,6 +382,14 @@ where
         &self,
         pool_key: PoolKey,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, ClientConnectError> {
+        // Return a single connection if pooling is not enabled
+        if !self.pool.is_enabled() {
+            return self
+                .connect_to(pool_key)
+                .await
+                .map_err(ClientConnectError::Normal);
+        }
+
         // This actually races 2 different futures to try to get a ready
         // connection the fastest, and to reduce connection churn.
         //
@@ -1456,7 +1464,6 @@ impl fmt::Debug for Builder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Builder")
             .field("client_config", &self.client_config)
-            //.field("conn_builder", &self.conn_builder)
             .field("pool_config", &self.pool_config)
             .finish()
     }

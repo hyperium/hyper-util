@@ -138,7 +138,7 @@ impl<T, K: Key> Pool<T, K> {
         Pool { inner }
     }
 
-    fn is_enabled(&self) -> bool {
+    pub(crate) fn is_enabled(&self) -> bool {
         self.inner.is_some()
     }
 
