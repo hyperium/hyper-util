@@ -15,23 +15,52 @@ use http::{Request, Response};
 use http_body::Body;
 use hyper::{
     body::Incoming,
-    rt::{bounds::Http2ServerConnExec, Read, ReadBuf, Timer, Write},
-    server::conn::{http1, http2},
+    rt::{Read, ReadBuf, Timer, Write},
     service::Service,
 };
+
+#[cfg(feature = "http1")]
+use hyper::server::conn::http1;
+
+#[cfg(feature = "http2")]
+use hyper::{rt::bounds::Http2ServerConnExec, server::conn::http2};
+
+#[cfg(any(not(feature = "http2"), not(feature = "http1")))]
+use std::marker::PhantomData;
+
 use pin_project_lite::pin_project;
 
 use crate::common::rewind::Rewind;
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+type Error = Box<dyn std::error::Error + Send + Sync>;
+
+type Result<T> = std::result::Result<T, Error>;
 
 const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
+/// Exactly equivalent to [`Http2ServerConnExec`].
+#[cfg(feature = "http2")]
+pub trait HttpServerConnExec<A, B: Body>: Http2ServerConnExec<A, B> {}
+
+#[cfg(feature = "http2")]
+impl<A, B: Body, T: Http2ServerConnExec<A, B>> HttpServerConnExec<A, B> for T {}
+
+/// Exactly equivalent to [`Http2ServerConnExec`].
+#[cfg(not(feature = "http2"))]
+pub trait HttpServerConnExec<A, B: Body> {}
+
+#[cfg(not(feature = "http2"))]
+impl<A, B: Body, T> HttpServerConnExec<A, B> for T {}
 
 /// Http1 or Http2 connection builder.
 #[derive(Clone, Debug)]
 pub struct Builder<E> {
+    #[cfg(feature = "http1")]
     http1: http1::Builder,
+    #[cfg(feature = "http2")]
     http2: http2::Builder<E>,
+    #[cfg(not(feature = "http2"))]
+    _executor: E,
 }
 
 impl<E> Builder<E> {
@@ -52,17 +81,23 @@ impl<E> Builder<E> {
     /// ```
     pub fn new(executor: E) -> Self {
         Self {
+            #[cfg(feature = "http1")]
             http1: http1::Builder::new(),
+            #[cfg(feature = "http2")]
             http2: http2::Builder::new(executor),
+            #[cfg(not(feature = "http2"))]
+            _executor: executor,
         }
     }
 
     /// Http1 configuration.
+    #[cfg(feature = "http1")]
     pub fn http1(&mut self) -> Http1Builder<'_, E> {
         Http1Builder { inner: self }
     }
 
     /// Http2 configuration.
+    #[cfg(feature = "http2")]
     pub fn http2(&mut self) -> Http2Builder<'_, E> {
         Http2Builder { inner: self }
     }
@@ -76,7 +111,7 @@ impl<E> Builder<E> {
         B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
-        E: Http2ServerConnExec<S::Future, B>,
+        E: HttpServerConnExec<S::Future, B>,
     {
         Connection {
             state: ConnState::ReadVersion {
@@ -102,7 +137,7 @@ impl<E> Builder<E> {
         B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + Send + 'static,
-        E: Http2ServerConnExec<S::Future, B>,
+        E: HttpServerConnExec<S::Future, B>,
     {
         UpgradeableConnection {
             state: UpgradeableConnState::ReadVersion {
@@ -113,10 +148,22 @@ impl<E> Builder<E> {
         }
     }
 }
+
 #[derive(Copy, Clone)]
 enum Version {
     H1,
     H2,
+}
+
+impl Version {
+    #[must_use]
+    #[cfg(any(not(feature = "http2"), not(feature = "http1")))]
+    pub fn unsupported(self) -> Error {
+        match self {
+            Version::H1 => Error::from("HTTP/1 is not supported"),
+            Version::H2 => Error::from("HTTP/2 is not supported"),
+        }
+    }
 }
 
 fn read_version<I>(io: I) -> ReadVersion<I>
@@ -202,6 +249,18 @@ pin_project! {
     }
 }
 
+#[cfg(feature = "http1")]
+type Http1Connection<I, S> = hyper::server::conn::http1::Connection<Rewind<I>, S>;
+
+#[cfg(not(feature = "http1"))]
+type Http1Connection<I, S> = (PhantomData<I>, PhantomData<S>);
+
+#[cfg(feature = "http2")]
+type Http2Connection<I, S, E> = hyper::server::conn::http2::Connection<Rewind<I>, S, E>;
+
+#[cfg(not(feature = "http2"))]
+type Http2Connection<I, S, E> = (PhantomData<I>, PhantomData<S>, PhantomData<E>);
+
 pin_project! {
     #[project = ConnStateProj]
     enum ConnState<'a, I, S, E>
@@ -216,11 +275,11 @@ pin_project! {
         },
         H1 {
             #[pin]
-            conn: hyper::server::conn::http1::Connection<Rewind<I>, S>,
+            conn: Http1Connection<I, S>,
         },
         H2 {
             #[pin]
-            conn: hyper::server::conn::http2::Connection<Rewind<I>, S, E>,
+            conn: Http2Connection<I, S, E>,
         },
     }
 }
@@ -232,7 +291,7 @@ where
     I: Read + Write + Unpin,
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
-    E: Http2ServerConnExec<S::Future, B>,
+    E: HttpServerConnExec<S::Future, B>,
 {
     /// Start a graceful shutdown process for this connection.
     ///
@@ -245,8 +304,12 @@ where
     pub fn graceful_shutdown(self: Pin<&mut Self>) {
         match self.project().state.project() {
             ConnStateProj::ReadVersion { .. } => {}
+            #[cfg(feature = "http1")]
             ConnStateProj::H1 { conn } => conn.graceful_shutdown(),
+            #[cfg(feature = "http2")]
             ConnStateProj::H2 { conn } => conn.graceful_shutdown(),
+            #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+            _ => unreachable!(),
         }
     }
 }
@@ -259,7 +322,7 @@ where
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
     I: Read + Write + Unpin + 'static,
-    E: Http2ServerConnExec<S::Future, B>,
+    E: HttpServerConnExec<S::Future, B>,
 {
     type Output = Result<()>;
 
@@ -276,22 +339,30 @@ where
                     let (version, io) = ready!(read_version.poll(cx))?;
                     let service = service.take().unwrap();
                     match version {
+                        #[cfg(feature = "http1")]
                         Version::H1 => {
                             let conn = builder.http1.serve_connection(io, service);
                             this.state.set(ConnState::H1 { conn });
                         }
+                        #[cfg(feature = "http2")]
                         Version::H2 => {
                             let conn = builder.http2.serve_connection(io, service);
                             this.state.set(ConnState::H2 { conn });
                         }
+                        #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+                        _ => return Poll::Ready(Err(version.unsupported())),
                     }
                 }
+                #[cfg(feature = "http1")]
                 ConnStateProj::H1 { conn } => {
                     return conn.poll(cx).map_err(Into::into);
                 }
+                #[cfg(feature = "http2")]
                 ConnStateProj::H2 { conn } => {
                     return conn.poll(cx).map_err(Into::into);
                 }
+                #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+                _ => unreachable!(),
             }
         }
     }
@@ -308,6 +379,12 @@ pin_project! {
     }
 }
 
+#[cfg(feature = "http1")]
+type Http1UpgradeableConnection<I, S> = hyper::server::conn::http1::UpgradeableConnection<I, S>;
+
+#[cfg(not(feature = "http1"))]
+type Http1UpgradeableConnection<I, S> = (PhantomData<I>, PhantomData<S>);
+
 pin_project! {
     #[project = UpgradeableConnStateProj]
     enum UpgradeableConnState<'a, I, S, E>
@@ -322,11 +399,11 @@ pin_project! {
         },
         H1 {
             #[pin]
-            conn: hyper::server::conn::http1::UpgradeableConnection<Rewind<I>, S>,
+            conn: Http1UpgradeableConnection<Rewind<I>, S>,
         },
         H2 {
             #[pin]
-            conn: hyper::server::conn::http2::Connection<Rewind<I>, S, E>,
+            conn: Http2Connection<I, S, E>,
         },
     }
 }
@@ -338,7 +415,7 @@ where
     I: Read + Write + Unpin,
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
-    E: Http2ServerConnExec<S::Future, B>,
+    E: HttpServerConnExec<S::Future, B>,
 {
     /// Start a graceful shutdown process for this connection.
     ///
@@ -351,8 +428,12 @@ where
     pub fn graceful_shutdown(self: Pin<&mut Self>) {
         match self.project().state.project() {
             UpgradeableConnStateProj::ReadVersion { .. } => {}
+            #[cfg(feature = "http1")]
             UpgradeableConnStateProj::H1 { conn } => conn.graceful_shutdown(),
+            #[cfg(feature = "http2")]
             UpgradeableConnStateProj::H2 { conn } => conn.graceful_shutdown(),
+            #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+            _ => unreachable!(),
         }
     }
 }
@@ -365,7 +446,7 @@ where
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
     I: Read + Write + Unpin + Send + 'static,
-    E: Http2ServerConnExec<S::Future, B>,
+    E: HttpServerConnExec<S::Future, B>,
 {
     type Output = Result<()>;
 
@@ -382,34 +463,45 @@ where
                     let (version, io) = ready!(read_version.poll(cx))?;
                     let service = service.take().unwrap();
                     match version {
+                        #[cfg(feature = "http1")]
                         Version::H1 => {
                             let conn = builder.http1.serve_connection(io, service).with_upgrades();
                             this.state.set(UpgradeableConnState::H1 { conn });
                         }
+                        #[cfg(feature = "http2")]
                         Version::H2 => {
                             let conn = builder.http2.serve_connection(io, service);
                             this.state.set(UpgradeableConnState::H2 { conn });
                         }
+                        #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+                        _ => return Poll::Ready(Err(version.unsupported())),
                     }
                 }
+                #[cfg(feature = "http1")]
                 UpgradeableConnStateProj::H1 { conn } => {
                     return conn.poll(cx).map_err(Into::into);
                 }
+                #[cfg(feature = "http2")]
                 UpgradeableConnStateProj::H2 { conn } => {
                     return conn.poll(cx).map_err(Into::into);
                 }
+                #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+                _ => unreachable!(),
             }
         }
     }
 }
 
 /// Http1 part of builder.
+#[cfg(feature = "http1")]
 pub struct Http1Builder<'a, E> {
     inner: &'a mut Builder<E>,
 }
 
+#[cfg(feature = "http1")]
 impl<E> Http1Builder<'_, E> {
     /// Http2 configuration.
+    #[cfg(feature = "http2")]
     pub fn http2(&mut self) -> Http2Builder<'_, E> {
         Http2Builder { inner: self.inner }
     }
@@ -522,6 +614,7 @@ impl<E> Http1Builder<'_, E> {
     }
 
     /// Bind a connection together with a [`Service`].
+    #[cfg(feature = "http2")]
     pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
@@ -530,18 +623,35 @@ impl<E> Http1Builder<'_, E> {
         B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
-        E: Http2ServerConnExec<S::Future, B>,
+        E: HttpServerConnExec<S::Future, B>,
+    {
+        self.inner.serve_connection(io, service).await
+    }
+
+    /// Bind a connection together with a [`Service`].
+    #[cfg(not(feature = "http2"))]
+    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
+    where
+        S: Service<Request<Incoming>, Response = Response<B>>,
+        S::Future: 'static,
+        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B: Body + 'static,
+        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        I: Read + Write + Unpin + 'static,
     {
         self.inner.serve_connection(io, service).await
     }
 }
 
 /// Http2 part of builder.
+#[cfg(feature = "http2")]
 pub struct Http2Builder<'a, E> {
     inner: &'a mut Builder<E>,
 }
 
+#[cfg(feature = "http2")]
 impl<E> Http2Builder<'_, E> {
+    #[cfg(feature = "http1")]
     /// Http1 configuration.
     pub fn http1(&mut self) -> Http1Builder<'_, E> {
         Http1Builder { inner: self.inner }
@@ -675,7 +785,7 @@ impl<E> Http2Builder<'_, E> {
         B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
-        E: Http2ServerConnExec<S::Future, B>,
+        E: HttpServerConnExec<S::Future, B>,
     {
         self.inner.serve_connection(io, service).await
     }
