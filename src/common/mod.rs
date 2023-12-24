@@ -10,6 +10,7 @@ macro_rules! ready {
 }
 
 pub(crate) use ready;
+pub mod buf;
 pub(crate) mod exec;
 #[cfg(feature = "client")]
 mod lazy;
