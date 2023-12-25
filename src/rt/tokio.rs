@@ -72,6 +72,11 @@ impl<T> TokioIo<T> {
         &self.inner
     }
 
+    /// Mut borrow the inner type.
+    pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+
     /// Consume this wrapper and get the inner type.
     pub fn into_inner(self) -> T {
         self.inner

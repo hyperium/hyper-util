@@ -100,7 +100,7 @@ jobs:
         env:
           # Can't enable tcp feature since Miri does not support the tokio runtime
           MIRIFLAGS: "-Zmiri-disable-isolation"
-        run: cargo miri test
+        run: cargo miri test --all-features
 
   features:
     name: features
