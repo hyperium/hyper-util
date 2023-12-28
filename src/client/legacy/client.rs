@@ -1516,6 +1516,10 @@ impl StdError for Error {
 }
 
 impl Error {
+    pub fn is_connect(&self) -> bool {
+        matches!(self.kind, ErrorKind::Connect)
+    }
+
     fn is_canceled(&self) -> bool {
         matches!(self.kind, ErrorKind::Canceled)
     }
