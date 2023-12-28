@@ -422,8 +422,14 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         if self.idle_interval_ref.is_some() {
             return;
         }
-        let Some(dur) = self.timeout else { return };
-        let Some(timer) = self.timer.clone() else {
+        let dur = if let Some(dur) = self.timeout {
+            dur
+        } else {
+            return;
+        };
+        let timer = if let Some(timer) = self.timer.clone() {
+            timer
+        } else {
             return;
         };
         let (tx, rx) = oneshot::channel();
