@@ -1005,7 +1005,7 @@ impl Builder {
         }
     }
     /// Set an optional timeout for idle sockets being kept-alive.
-    /// A `Timer` is required for this to take effect
+    /// A `Timer` is required for this to take effect. See `Builder::pool_timer`
     ///
     /// Pass `None` to disable timeout.
     ///
@@ -1022,7 +1022,7 @@ impl Builder {
     ///
     /// let client = Client::builder(TokioExecutor::new())
     ///     .pool_idle_timeout(Duration::from_secs(30))
-    ///     .timer(TokioTimer::new())
+    ///     .pool_timer(TokioTimer::new())
     ///     .build_http();
     ///
     /// # let infer: Client<_, http_body_util::Full<bytes::Bytes>> = client;
@@ -1389,7 +1389,7 @@ impl Builder {
         self
     }
 
-    /// Provide a timer to be used for timeouts and intervals.
+    /// Provide a timer to be used for h2
     ///
     /// See the documentation of [`h2::client::Builder::timer`] for more
     /// details.
@@ -1397,11 +1397,19 @@ impl Builder {
     /// [`h2::client::Builder::timer`]: https://docs.rs/h2/client/struct.Builder.html#method.timer
     pub fn timer<M>(&mut self, timer: M) -> &mut Self
     where
+        M: Timer + Send + Sync + 'static,
+    {
+        #[cfg(feature = "http2")]
+        self.h2_builder.timer(timer);
+        self
+    }
+
+    /// Provide a timer to be used for timeouts and intervals in connection pools.
+    pub fn pool_timer<M>(&mut self, timer: M) -> &mut Self
+    where
         M: Timer + Clone + Send + Sync + 'static,
     {
         self.pool_timer = Some(timer::Timer::new(timer.clone()));
-        #[cfg(feature = "http2")]
-        self.h2_builder.timer(timer);
         self
     }
 
