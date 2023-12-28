@@ -834,7 +834,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
-    use crate::rt::TokioExecutor;
+    use crate::rt::{TokioExecutor, TokioTimer};
 
     use crate::common::timer;
 
@@ -974,17 +974,14 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // TODO
     async fn test_pool_timer_removes_expired() {
-        tokio::time::pause();
-
         let pool = Pool::new(
             super::Config {
                 idle_timeout: Some(Duration::from_millis(10)),
                 max_idle_per_host: std::usize::MAX,
             },
             TokioExecutor::new(),
-            Option::<timer::Timer>::None,
+            Some(TokioTimer::new()),
         );
 
         let key = host_key("foo");
@@ -999,7 +996,7 @@ mod tests {
         );
 
         // Let the timer tick passed the expiration...
-        tokio::time::advance(Duration::from_millis(30)).await;
+        tokio::time::sleep(Duration::from_millis(30)).await;
         // Yield so the Interval can reap...
         tokio::task::yield_now().await;
 
