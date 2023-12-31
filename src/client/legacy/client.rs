@@ -129,7 +129,7 @@ impl Client<(), ()> {
 impl<C, B> Client<C, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
-    B: Body + Send + 'static + Unpin,
+    B: Body + Send + 'static,
     B::Data: Send,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
