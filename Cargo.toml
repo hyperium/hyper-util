@@ -75,3 +75,4 @@ __internal_happy_eyeballs_tests = []
 [[example]]
 name = "client"
 required-features = ["client-legacy", "http1", "tokio"]
+
