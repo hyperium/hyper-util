@@ -15,9 +15,10 @@ use std::task::{self, Poll};
 use std::time::{Duration, Instant};
 
 use futures_channel::oneshot;
+use futures_util::ready;
 use tracing::{debug, trace};
 
-use crate::common::{exec, exec::Exec, ready};
+use crate::common::exec::{self, Exec};
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
