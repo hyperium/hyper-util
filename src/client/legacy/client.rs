@@ -22,7 +22,8 @@ use tracing::{debug, trace, warn};
 use super::connect::HttpConnector;
 use super::connect::{Alpn, Connect, Connected, Connection};
 use super::pool::{self, Ver};
-use crate::common::{lazy as hyper_lazy, Exec, Lazy, SyncWrapper};
+
+use crate::common::{lazy as hyper_lazy, timer, Exec, Lazy, SyncWrapper};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -975,6 +976,7 @@ pub struct Builder {
     #[cfg(feature = "http2")]
     h2_builder: hyper::client::conn::http2::Builder<Exec>,
     pool_config: pool::Config,
+    pool_timer: Option<timer::Timer>,
 }
 
 impl Builder {
@@ -999,13 +1001,34 @@ impl Builder {
                 idle_timeout: Some(Duration::from_secs(90)),
                 max_idle_per_host: std::usize::MAX,
             },
+            pool_timer: None,
         }
     }
     /// Set an optional timeout for idle sockets being kept-alive.
+    /// A `Timer` is required for this to take effect. See `Builder::pool_timer`
     ///
     /// Pass `None` to disable timeout.
     ///
     /// Default is 90 seconds.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[cfg(feature = "tokio")]
+    /// # fn run () {
+    /// use std::time::Duration;
+    /// use hyper_util::client::legacy::Client;
+    /// use hyper_util::rt::{TokioExecutor, TokioTimer};
+    ///
+    /// let client = Client::builder(TokioExecutor::new())
+    ///     .pool_idle_timeout(Duration::from_secs(30))
+    ///     .pool_timer(TokioTimer::new())
+    ///     .build_http();
+    ///
+    /// # let infer: Client<_, http_body_util::Full<bytes::Bytes>> = client;
+    /// # }
+    /// # fn main() {}
+    /// ```
     pub fn pool_idle_timeout<D>(&mut self, val: D) -> &mut Self
     where
         D: Into<Option<Duration>>,
@@ -1366,7 +1389,7 @@ impl Builder {
         self
     }
 
-    /// Provide a timer to be used for timeouts and intervals.
+    /// Provide a timer to be used for h2
     ///
     /// See the documentation of [`h2::client::Builder::timer`] for more
     /// details.
@@ -1378,7 +1401,15 @@ impl Builder {
     {
         #[cfg(feature = "http2")]
         self.h2_builder.timer(timer);
-        // TODO(https://github.com/hyperium/hyper/issues/3167) set for pool as well
+        self
+    }
+
+    /// Provide a timer to be used for timeouts and intervals in connection pools.
+    pub fn pool_timer<M>(&mut self, timer: M) -> &mut Self
+    where
+        M: Timer + Clone + Send + Sync + 'static,
+    {
+        self.pool_timer = Some(timer::Timer::new(timer.clone()));
         self
     }
 
@@ -1447,6 +1478,7 @@ impl Builder {
         B::Data: Send,
     {
         let exec = self.exec.clone();
+        let timer = self.pool_timer.clone();
         Client {
             config: self.client_config,
             exec: exec.clone(),
@@ -1455,7 +1487,7 @@ impl Builder {
             #[cfg(feature = "http2")]
             h2_builder: self.h2_builder.clone(),
             connector,
-            pool: pool::Pool::new(self.pool_config, exec),
+            pool: pool::Pool::new(self.pool_config, exec, timer),
         }
     }
 }

@@ -6,6 +6,7 @@ mod lazy;
 pub(crate) mod rewind;
 #[cfg(feature = "client")]
 mod sync;
+pub(crate) mod timer;
 
 #[cfg(feature = "client")]
 pub(crate) use exec::Exec;
