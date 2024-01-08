@@ -1,10 +1,10 @@
 //! Utility to gracefully shutdown a server.
-//! 
+//!
 //! This module provides a [`GracefulShutdown`] type,
 //! which can be used to gracefully shutdown a server.
-//! 
+//!
 //! # Example
-//! 
+//!
 //! TODO
 
 use pin_project_lite::pin_project;
@@ -177,6 +177,17 @@ impl Future for GracefulWaiter {
                 }
 
                 let mut waker_list = state.state.waker_list.lock().unwrap();
+
+                if state
+                    .state
+                    .counter
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    == 0
+                {
+                    // check again in case of race condition
+                    return Poll::Ready(());
+                }
+
                 let waker = Some(cx.waker().clone());
                 state.key = Some(match state.key.take() {
                     Some(key) => {
