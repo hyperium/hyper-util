@@ -63,7 +63,7 @@ client-legacy = ["client"]
 
 server = ["hyper/server"]
 server-auto = ["server", "http1", "http2"]
-server-graceful = ["dep:slab"]
+server-graceful = ["dep:slab", "dep:tokio"]
 
 service = ["dep:tower", "dep:tower-service"]
 
