@@ -3,27 +3,22 @@
 //! This module provides a [`GracefulShutdown`] type,
 //! which can be used to gracefully shutdown a server.
 //!
-//! # Example
-//!
-//! TODO
+//! See <https://github.com/hyperium/hyper-util/blob/master/examples/server_graceful.rs>
+//! for an example of how to use this.
 
 use futures_util::FutureExt;
 use pin_project_lite::pin_project;
 use slab::Slab;
 use std::{
-    fmt::{self, Debug, Display},
+    fmt::{self, Debug},
     future::Future,
     pin::{pin, Pin},
-    sync::{
-        atomic::{AtomicBool, AtomicUsize},
-        Arc, Mutex,
-    },
+    sync::{atomic::AtomicUsize, Arc, Mutex},
     task::{self, Poll, Waker},
 };
 use tokio::select;
 
 /// A graceful shutdown watcher
-#[derive(Clone)]
 pub struct GracefulShutdown {
     state: Arc<GracefulState>,
 }
@@ -46,31 +41,51 @@ impl GracefulShutdown {
         Self {
             state: Arc::new(GracefulState {
                 counter: AtomicUsize::new(0),
-                shutdown: AtomicBool::new(false),
                 waker_list: Mutex::new(Slab::new()),
             }),
         }
     }
 
+    /// Get a graceful shutdown watcher
+    pub fn watcher(&self) -> GracefulWatcher {
+        self.state.subscribe();
+        GracefulWatcher {
+            state: self.state.clone(),
+        }
+    }
+
+    /// Wait for a graceful shutdown
+    pub fn shutdown(self) -> GracefulWaiter {
+        GracefulWaiter {
+            state: GracefulWaiterState {
+                state: self.state.clone(),
+                key: None,
+            },
+        }
+    }
+}
+
+/// A graceful shutdown watcher.
+pub struct GracefulWatcher {
+    state: Arc<GracefulState>,
+}
+
+impl Drop for GracefulWatcher {
+    fn drop(&mut self) {
+        self.state.unsubscribe();
+    }
+}
+
+impl GracefulWatcher {
     /// Watch a future for graceful shutdown,
     /// returning a wrapper that can be awaited on.
-    pub fn watch<C, F>(
-        &self,
-        conn: C,
-        cancel: F,
-    ) -> Result<GracefulFuture<C::Error>, GracefulShutdownError<C>>
+    pub fn watch<'a, C, F>(&'a self, conn: C, cancel: F) -> GracefulFuture<C::Error>
     where
-        C: GracefulConnection + Send + Sync + 'static,
-        F: Future + Send + Sync + 'static,
+        C: GracefulConnection + Send + Sync + 'a,
+        F: Future + Send + Sync + 'a,
     {
-        if self
-            .state
-            .shutdown
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
-            return Err(GracefulShutdownError { conn });
-        }
-        Ok(GracefulFuture {
+        self.state.subscribe();
+        GracefulFuture {
             future: Box::pin(async move {
                 let mut conn = pin!(conn);
                 let mut cancel = pin!(cancel.fuse());
@@ -89,37 +104,22 @@ impl GracefulShutdown {
                 }
             }),
             state: Some(self.state.clone()),
-        })
-    }
-
-    /// Wait for a graceful shutdown
-    pub fn shutdown(self) -> GracefulWaiter {
-        if self
-            .state
-            .shutdown
-            .swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
-            return GracefulWaiter {
-                status: GracefulWaiterStatus::Closed,
-            };
-        }
-        GracefulWaiter {
-            status: GracefulWaiterStatus::Open(GracefulWaiterState {
-                state: self.state.clone(),
-                key: None,
-            }),
         }
     }
 }
 
 struct GracefulState {
     counter: AtomicUsize,
-    shutdown: AtomicBool,
     waker_list: Mutex<Slab<Option<Waker>>>,
 }
 
 impl GracefulState {
-    fn unwatch(&self) {
+    fn subscribe(&self) {
+        self.counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn unsubscribe(&self) {
         if self
             .counter
             .fetch_sub(1, std::sync::atomic::Ordering::SeqCst)
@@ -147,27 +147,27 @@ pin_project! {
     ///
     /// Whether or not this future panics in such cases is an implementation detail
     /// and should not be relied upon.
-    pub struct GracefulFuture<E> {
+    pub struct GracefulFuture<'a, E> {
         #[pin]
-        future: BoxFuture<E>,
+        future: BoxFuture<'a, E>,
         state: Option<Arc<GracefulState>>,
     }
 }
 
-impl<F> Debug for GracefulFuture<F> {
+impl<'a, F> Debug for GracefulFuture<'a, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GracefulFuture").finish()
     }
 }
 
-impl<E> Future for GracefulFuture<E> {
+impl<'a, E> Future for GracefulFuture<'a, E> {
     type Output = Result<(), E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this.future.poll(cx) {
             Poll::Ready(v) => {
-                this.state.take().unwrap().unwatch();
+                this.state.take().unwrap().unsubscribe();
                 Poll::Ready(v)
             }
             Poll::Pending => Poll::Pending,
@@ -177,55 +177,47 @@ impl<E> Future for GracefulFuture<E> {
 
 /// A future that blocks until a graceful shutdown is complete.
 pub struct GracefulWaiter {
-    status: GracefulWaiterStatus,
+    state: GracefulWaiterState,
 }
 
 impl Future for GracefulWaiter {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        match self.status {
-            GracefulWaiterStatus::Closed => Poll::Ready(()),
-            GracefulWaiterStatus::Open(ref mut state) => {
-                if state
-                    .state
-                    .counter
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                    == 0
-                {
-                    return Poll::Ready(());
-                }
+        let state = &mut self.state;
 
-                let mut waker_list = state.state.waker_list.lock().unwrap();
-
-                if state
-                    .state
-                    .counter
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                    == 0
-                {
-                    // check again in case of race condition
-                    return Poll::Ready(());
-                }
-
-                let waker = Some(cx.waker().clone());
-                state.key = Some(match state.key.take() {
-                    Some(key) => {
-                        *waker_list.get_mut(key).unwrap() = waker;
-                        key
-                    }
-                    None => waker_list.insert(waker),
-                });
-
-                Poll::Pending
-            }
+        if state
+            .state
+            .counter
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 0
+        {
+            return Poll::Ready(());
         }
-    }
-}
 
-enum GracefulWaiterStatus {
-    Closed,
-    Open(GracefulWaiterState),
+        let mut waker_list = state.state.waker_list.lock().unwrap();
+
+        if state
+            .state
+            .counter
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 0
+        {
+            // check again in case of race condition
+            return Poll::Ready(());
+        }
+
+        let waker = Some(cx.waker().clone());
+        state.key = Some(match state.key.take() {
+            Some(key) => {
+                *waker_list.get_mut(key).unwrap() = waker;
+                key
+            }
+            None => waker_list.insert(waker),
+        });
+
+        Poll::Pending
+    }
 }
 
 struct GracefulWaiterState {
@@ -233,34 +225,7 @@ struct GracefulWaiterState {
     key: Option<usize>,
 }
 
-/// The error type returned by [`GracefulShutdown::watch`],
-/// when a graceful shutdown is already in progress.
-pub struct GracefulShutdownError<C> {
-    conn: C,
-}
-
-impl<C> GracefulShutdownError<C> {
-    /// Get back the connection that errored with a [`GracefulShutdownError`].
-    pub fn into_connection(self) -> C {
-        self.conn
-    }
-}
-
-impl<C> Display for GracefulShutdownError<C> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("graceful shutdown already in progress")
-    }
-}
-
-impl<C> Debug for GracefulShutdownError<C> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(self, f)
-    }
-}
-
-impl<F> std::error::Error for GracefulShutdownError<F> {}
-
-type BoxFuture<E> = Pin<Box<dyn Future<Output = Result<(), E>> + Send + Sync + 'static>>;
+type BoxFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Send + Sync + 'a>>;
 
 /// An internal utility trait as an umbrella target for all (hyper) connection
 /// types that the [`GracefulShutdown`] can watch.

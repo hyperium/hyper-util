@@ -35,7 +35,7 @@ slab = { version = "0.4.9", optional = true }
 hyper = { version = "1.1.0", features = ["full"] }
 bytes = "1"
 http-body-util = "0.1.0"
-tokio = { version = "1", features = ["macros", "test-util"] }
+tokio = { version = "1", features = ["macros", "test-util", "signal"] }
 tokio-test = "0.4"
 pretty_env_logger = "0.5"
 
@@ -78,3 +78,7 @@ __internal_happy_eyeballs_tests = []
 [[example]]
 name = "client"
 required-features = ["client-legacy", "http1", "tokio"]
+
+[[example]]
+name = "server_graceful"
+required-features = ["tokio", "server-graceful", "server-auto"]
