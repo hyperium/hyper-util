@@ -65,15 +65,7 @@ impl GracefulShutdown {
     /// Wait for a graceful shutdown
     pub fn shutdown(self) -> GracefulWaiter {
         // prepare futures and signal them to shutdown
-        self.future_state
-            .counter
-            .store(0, std::sync::atomic::Ordering::SeqCst);
-        let mut waker_list = self.future_state.waker_list.lock().unwrap();
-        for (_, waker) in waker_list.iter_mut() {
-            if let Some(waker) = waker.take() {
-                waker.wake();
-            }
-        }
+        self.future_state.unsubscribe();
 
         // return the future to wait for shutdown
         GracefulWaiter {
