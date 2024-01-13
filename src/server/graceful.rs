@@ -66,12 +66,7 @@ impl GracefulShutdown {
         self.future_state.unsubscribe();
 
         // return the future to wait for shutdown
-        GracefulWaiter {
-            state: GracefulWaiterState {
-                state: self.state,
-                key: None,
-            },
-        }
+        GracefulWaiter::new(self.state)
     }
 }
 
@@ -94,14 +89,7 @@ impl GracefulWatcher {
         // add a counter for this future to ensure it is taken into account
         self.state.subscribe();
 
-        // prepare a future that will be used to signal graceful shutdown
-        let cancel = GracefulWaiter {
-            state: GracefulWaiterState {
-                state: self.future_state.clone(),
-                key: None,
-            },
-        };
-
+        let cancel = GracefulWaiter::new(self.future_state.clone());
         let future = GracefulConnectionFuture::new(conn, cancel);
 
         // return the graceful future, ready to be shutdown,
@@ -186,6 +174,14 @@ where
 /// A future that blocks until a graceful shutdown is complete.
 pub struct GracefulWaiter {
     state: GracefulWaiterState,
+}
+
+impl GracefulWaiter {
+    fn new(state: Arc<GracefulState>) -> Self {
+        Self {
+            state: GracefulWaiterState { state, key: None },
+        }
+    }
 }
 
 impl Future for GracefulWaiter {
