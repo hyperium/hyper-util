@@ -20,7 +20,10 @@ use tokio::select;
 
 /// A graceful shutdown watcher
 pub struct GracefulShutdown {
+    // state used to keep track of all futures that are being watched
     state: Arc<GracefulState>,
+    // state that the watched futures to know when shutdown signal is received
+    future_state: Arc<GracefulState>,
 }
 
 impl Debug for GracefulShutdown {
@@ -43,6 +46,10 @@ impl GracefulShutdown {
                 counter: AtomicUsize::new(0),
                 waker_list: Mutex::new(Slab::new()),
             }),
+            future_state: Arc::new(GracefulState {
+                counter: AtomicUsize::new(1),
+                waker_list: Mutex::new(Slab::new()),
+            }),
         }
     }
 
@@ -51,14 +58,27 @@ impl GracefulShutdown {
         self.state.subscribe();
         GracefulWatcher {
             state: self.state.clone(),
+            future_state: self.future_state.clone(),
         }
     }
 
     /// Wait for a graceful shutdown
     pub fn shutdown(self) -> GracefulWaiter {
+        // prepare futures and signal them to shutdown
+        self.future_state
+            .counter
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        let mut waker_list = self.future_state.waker_list.lock().unwrap();
+        for (_, waker) in waker_list.iter_mut() {
+            if let Some(waker) = waker.take() {
+                waker.wake();
+            }
+        }
+
+        // return the future to wait for shutdown
         GracefulWaiter {
             state: GracefulWaiterState {
-                state: self.state.clone(),
+                state: self.state,
                 key: None,
             },
         }
@@ -68,6 +88,7 @@ impl GracefulShutdown {
 /// A graceful shutdown watcher.
 pub struct GracefulWatcher {
     state: Arc<GracefulState>,
+    future_state: Arc<GracefulState>,
 }
 
 impl Drop for GracefulWatcher {
@@ -79,12 +100,23 @@ impl Drop for GracefulWatcher {
 impl GracefulWatcher {
     /// Watch a future for graceful shutdown,
     /// returning a wrapper that can be awaited on.
-    pub fn watch<'a, C, F>(&'a self, conn: C, cancel: F) -> GracefulFuture<C::Error>
+    pub fn watch<'a, C>(&'a self, conn: C) -> GracefulFuture<C::Error>
     where
         C: GracefulConnection + Send + Sync + 'a,
-        F: Future + Send + Sync + 'a,
     {
+        // add a counter for this future to ensure it is taken into account
         self.state.subscribe();
+
+        // prepare a future that will be used to signal graceful shutdown
+        let cancel = GracefulWaiter {
+            state: GracefulWaiterState {
+                state: self.future_state.clone(),
+                key: None,
+            },
+        };
+
+        // return the graceful future, ready to be shutdown,
+        // and handling all the hyper graceful logic
         GracefulFuture {
             future: Box::pin(async move {
                 let mut conn = pin!(conn);

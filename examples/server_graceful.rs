@@ -3,7 +3,6 @@ use std::convert::Infallible;
 use std::pin::pin;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::sync::broadcast::channel;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,7 +10,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     let mut ctrl_c = pin!(tokio::signal::ctrl_c());
-    let (shutdown_tx, _) = channel(1);
 
     loop {
         tokio::select! {
@@ -25,13 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
                 eprintln!("incomming connection accepted: {}", peer_addr);
-                let mut shutdown_rx = shutdown_tx.subscribe();
 
                 let stream = hyper_util::rt::TokioIo::new(Box::pin(stream));
-                let cancel = async move {
-                    let _ = shutdown_rx.recv().await;
-                    eprintln!("connection shutdown triggered {}", peer_addr);
-                };
                 let watcher = graceful.watcher();
 
                 tokio::spawn(async move {
@@ -42,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Ok::<_, Infallible>(http::Response::new(body))
                         }));
 
-                    let conn = watcher.watch(conn, cancel);
+                    let conn = watcher.watch(conn);
 
                     if let Err(err) = conn.await {
                         eprintln!("connection error: {}", err);
@@ -58,8 +51,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-
-    let _ = shutdown_tx.send(());
 
     tokio::select! {
         _ = graceful.shutdown() => {
