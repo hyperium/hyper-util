@@ -925,7 +925,7 @@ fn set_scheme(uri: &mut Uri, scheme: Scheme) {
         uri.scheme().is_none(),
         "set_scheme expects no existing scheme"
     );
-    let old = std::mem::replace(uri, Uri::default());
+    let old = std::mem::take(uri);
     let mut parts: ::http::uri::Parts = old.into();
     parts.scheme = Some(scheme);
     parts.path_and_query = Some("/".parse().expect("slash is a valid path"));

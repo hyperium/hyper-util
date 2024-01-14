@@ -388,7 +388,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             Some(value) => {
                 // borrow-check scope...
                 {
-                    let idle_list = self.idle.entry(key.clone()).or_insert_with(Vec::new);
+                    let idle_list = self.idle.entry(key.clone()).or_default();
                     if self.max_idle_per_host <= idle_list.len() {
                         trace!("max idle per host for {:?}, dropping connection", key);
                         return;
