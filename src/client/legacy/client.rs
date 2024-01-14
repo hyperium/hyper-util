@@ -633,7 +633,7 @@ where
 impl<C: Clone, B> Clone for Client<C, B> {
     fn clone(&self) -> Client<C, B> {
         Client {
-            config: self.config.clone(),
+            config: self.config,
             exec: self.exec.clone(),
             #[cfg(feature = "http1")]
             h1_builder: self.h1_builder.clone(),
@@ -925,7 +925,7 @@ fn set_scheme(uri: &mut Uri, scheme: Scheme) {
         uri.scheme().is_none(),
         "set_scheme expects no existing scheme"
     );
-    let old = std::mem::replace(uri, Uri::default());
+    let old = std::mem::take(uri);
     let mut parts: ::http::uri::Parts = old.into();
     parts.scheme = Some(scheme);
     parts.path_and_query = Some("/".parse().expect("slash is a valid path"));
