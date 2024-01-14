@@ -411,9 +411,7 @@ pub struct Http1Builder<'a, E> {
 impl<E> Http1Builder<'_, E> {
     /// Http2 configuration.
     pub fn http2(&mut self) -> Http2Builder<'_, E> {
-        Http2Builder {
-            inner: &mut self.inner,
-        }
+        Http2Builder { inner: self.inner }
     }
 
     /// Set whether HTTP/1 connections should support half-closures.
@@ -546,9 +544,7 @@ pub struct Http2Builder<'a, E> {
 impl<E> Http2Builder<'_, E> {
     /// Http1 configuration.
     pub fn http1(&mut self) -> Http1Builder<'_, E> {
-        Http1Builder {
-            inner: &mut self.inner,
-        }
+        Http1Builder { inner: self.inner }
     }
 
     /// Sets the [`SETTINGS_INITIAL_WINDOW_SIZE`][spec] option for HTTP2
