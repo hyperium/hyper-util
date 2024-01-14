@@ -633,7 +633,7 @@ where
 impl<C: Clone, B> Clone for Client<C, B> {
     fn clone(&self) -> Client<C, B> {
         Client {
-            config: self.config.clone(),
+            config: self.config,
             exec: self.exec.clone(),
             #[cfg(feature = "http1")]
             h1_builder: self.h1_builder.clone(),
