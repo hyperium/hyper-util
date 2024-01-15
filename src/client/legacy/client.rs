@@ -1153,7 +1153,7 @@ impl Builder {
 
     /// Sets whether invalid header lines should be silently ignored in HTTP/1 responses.
     ///
-    /// This mimicks the behaviour of major browsers. You probably don't want this.
+    /// This mimics the behaviour of major browsers. You probably don't want this.
     /// You should only want this if you are implementing a proxy whose main
     /// purpose is to sit in front of browsers whose users access arbitrary content
     /// which may be malformed, and they expect everything that works without
