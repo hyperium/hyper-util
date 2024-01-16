@@ -17,29 +17,29 @@ features = ["full"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-hyper = "1.1.0"
+hyper = "1.1"
 futures-channel = "0.3"
-futures-util = { version = "0.3.16", default-features = false }
+futures-util = { version = "0.3", default-features = false }
 http = "1.0"
-http-body = "1.0.0"
+http-body = "1.0"
 bytes = "1"
-pin-project-lite = "0.2.4"
+pin-project-lite = "0.2"
 socket2 = { version = "0.5", optional = true, features = ["all"] }
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 tokio = { version = "1", optional = true, features = ["net", "rt", "time"] }
 tower-service ={ version = "0.3", optional = true }
-tower = { version = "0.4.1", optional = true, features = ["make", "util"] }
+tower = { version = "0.4", optional = true, features = ["make", "util"] }
 
 [dev-dependencies]
 hyper = { version = "1.1.0", features = ["full"] }
 bytes = "1"
-http-body-util = "0.1.0"
+http-body-util = "0.1"
 tokio = { version = "1", features = ["macros", "test-util"] }
 tokio-test = "0.4"
 pretty_env_logger = "0.5"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
-pnet_datalink = "0.34.0"
+pnet_datalink = "0.34"
 
 [features]
 default = []
