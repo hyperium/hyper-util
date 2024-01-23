@@ -113,6 +113,19 @@ impl<E> Builder<E> {
         }
     }
 }
+
+impl<'a, E> From<Http1Builder<'a, E>> for &'a mut Builder<E> {
+    fn from(h1: Http1Builder<'a, E>) -> &'a mut Builder<E> {
+        h1.inner
+    }
+}
+
+impl<'a, E> From<Http2Builder<'a, E>> for &'a mut Builder<E> {
+    fn from(h2: Http2Builder<'a, E>) -> &'a mut Builder<E> {
+        h2.inner
+    }
+}
+
 #[derive(Copy, Clone)]
 enum Version {
     H1,
