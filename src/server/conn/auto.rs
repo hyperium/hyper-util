@@ -522,7 +522,7 @@ impl<E> Http1Builder<'_, E> {
     }
 
     /// Bind a connection together with a [`Service`].
-    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
+    pub fn serve_connection<I, S, B>(&self, io: I, service: S) -> Connection<I, S, E>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
@@ -532,7 +532,7 @@ impl<E> Http1Builder<'_, E> {
         I: Read + Write + Unpin + 'static,
         E: Http2ServerConnExec<S::Future, B>,
     {
-        self.inner.serve_connection(io, service).await
+        self.inner.serve_connection(io, service)
     }
 }
 
@@ -667,7 +667,7 @@ impl<E> Http2Builder<'_, E> {
     }
 
     /// Bind a connection together with a [`Service`].
-    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
+    pub fn serve_connection<I, S, B>(&self, io: I, service: S) -> Connection<I, S, E>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
@@ -677,7 +677,7 @@ impl<E> Http2Builder<'_, E> {
         I: Read + Write + Unpin + 'static,
         E: Http2ServerConnExec<S::Future, B>,
     {
-        self.inner.serve_connection(io, service).await
+        self.inner.serve_connection(io, service)
     }
 }
 
