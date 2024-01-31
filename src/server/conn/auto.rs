@@ -3,12 +3,11 @@
 use futures_util::ready;
 use hyper::service::HttpService;
 use std::future::Future;
-use std::io::{Error as IoError, ErrorKind, Result as IoResult};
 use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::{error::Error as StdError, marker::Unpin, time::Duration};
+use std::{error::Error as StdError, io, marker::Unpin, time::Duration};
 
 use bytes::Bytes;
 use http::{Request, Response};
@@ -174,7 +173,7 @@ where
         io: Some(io),
         buf: [MaybeUninit::uninit(); 24],
         filled: 0,
-        version: Version::H1,
+        version: Version::H2,
         _pin: PhantomPinned,
     }
 }
@@ -196,7 +195,7 @@ impl<I> Future for ReadVersion<I>
 where
     I: Read + Unpin,
 {
-    type Output = IoResult<(Version, Rewind<I>)>;
+    type Output = io::Result<(Version, Rewind<I>)>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
@@ -208,27 +207,21 @@ where
             buf.unfilled().advance(*this.filled);
         };
 
+        // We start as H2 and switch to H1 as soon as we don't have the preface.
         while buf.filled().len() < H2_PREFACE.len() {
-            if buf.filled() != &H2_PREFACE[0..buf.filled().len()] {
-                let io = this.io.take().unwrap();
-                let buf = buf.filled().to_vec();
-                return Poll::Ready(Ok((
-                    *this.version,
-                    Rewind::new_buffered(io, Bytes::from(buf)),
-                )));
-            } else {
-                // if our buffer is empty, then we need to read some data to continue.
-                let len = buf.filled().len();
-                ready!(Pin::new(this.io.as_mut().unwrap()).poll_read(cx, buf.unfilled()))?;
-                *this.filled = buf.filled().len();
-                if buf.filled().len() == len {
-                    return Err(IoError::new(ErrorKind::UnexpectedEof, "early eof")).into();
-                }
+            let len = buf.filled().len();
+            ready!(Pin::new(this.io.as_mut().unwrap()).poll_read(cx, buf.unfilled()))?;
+            *this.filled = buf.filled().len();
+
+            // We starts as H2 and switch to H1 when we don't get the preface.
+            if buf.filled().len() == len
+                || &buf.filled()[len..] != &H2_PREFACE[len..buf.filled().len()]
+            {
+                *this.version = Version::H1;
+                break;
             }
         }
-        if buf.filled() == H2_PREFACE {
-            *this.version = Version::H2;
-        }
+
         let io = this.io.take().unwrap();
         let buf = buf.filled().to_vec();
         Poll::Ready(Ok((
