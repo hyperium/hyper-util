@@ -5,6 +5,7 @@ use hyper::service::HttpService;
 use std::future::Future;
 use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
+use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::{error::Error as StdError, io, marker::Unpin, time::Duration};
@@ -493,12 +494,6 @@ pub struct Http1Builder<'a, E> {
 
 #[cfg(feature = "http1")]
 impl<E> Http1Builder<'_, E> {
-    /// Http2 configuration.
-    #[cfg(feature = "http2")]
-    pub fn http2(&mut self) -> Http2Builder<'_, E> {
-        Http2Builder { inner: self.inner }
-    }
-
     /// Set whether HTTP/1 connections should support half-closures.
     ///
     /// Clients can chose to shutdown their write-side while waiting
@@ -605,34 +600,19 @@ impl<E> Http1Builder<'_, E> {
         self.inner.http1.timer(timer);
         self
     }
+}
 
-    /// Bind a connection together with a [`Service`].
-    #[cfg(feature = "http2")]
-    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
-    where
-        S: Service<Request<Incoming>, Response = Response<B>>,
-        S::Future: 'static,
-        S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + 'static,
-        B::Error: Into<Box<dyn StdError + Send + Sync>>,
-        I: Read + Write + Unpin + 'static,
-        E: HttpServerConnExec<S::Future, B>,
-    {
-        self.inner.serve_connection(io, service).await
+impl<'a, E> Deref for Http1Builder<'a, E> {
+    type Target = Builder<E>;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
     }
+}
 
-    /// Bind a connection together with a [`Service`].
-    #[cfg(not(feature = "http2"))]
-    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
-    where
-        S: Service<Request<Incoming>, Response = Response<B>>,
-        S::Future: 'static,
-        S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + 'static,
-        B::Error: Into<Box<dyn StdError + Send + Sync>>,
-        I: Read + Write + Unpin + 'static,
-    {
-        self.inner.serve_connection(io, service).await
+impl<'a, E> DerefMut for Http1Builder<'a, E> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner
     }
 }
 
@@ -644,12 +624,6 @@ pub struct Http2Builder<'a, E> {
 
 #[cfg(feature = "http2")]
 impl<E> Http2Builder<'_, E> {
-    #[cfg(feature = "http1")]
-    /// Http1 configuration.
-    pub fn http1(&mut self) -> Http1Builder<'_, E> {
-        Http1Builder { inner: self.inner }
-    }
-
     /// Sets the [`SETTINGS_INITIAL_WINDOW_SIZE`][spec] option for HTTP2
     /// stream-level flow control.
     ///
@@ -768,19 +742,19 @@ impl<E> Http2Builder<'_, E> {
         self.inner.http2.timer(timer);
         self
     }
+}
 
-    /// Bind a connection together with a [`Service`].
-    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
-    where
-        S: Service<Request<Incoming>, Response = Response<B>>,
-        S::Future: 'static,
-        S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + 'static,
-        B::Error: Into<Box<dyn StdError + Send + Sync>>,
-        I: Read + Write + Unpin + 'static,
-        E: HttpServerConnExec<S::Future, B>,
-    {
-        self.inner.serve_connection(io, service).await
+impl<'a, E> Deref for Http2Builder<'a, E> {
+    type Target = Builder<E>;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
+    }
+}
+
+impl<'a, E> DerefMut for Http2Builder<'a, E> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner
     }
 }
 
