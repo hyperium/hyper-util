@@ -602,6 +602,7 @@ impl<E> Http1Builder<'_, E> {
     }
 }
 
+#[cfg(feature = "http1")]
 impl<'a, E> Deref for Http1Builder<'a, E> {
     type Target = Builder<E>;
 
@@ -610,6 +611,7 @@ impl<'a, E> Deref for Http1Builder<'a, E> {
     }
 }
 
+#[cfg(feature = "http1")]
 impl<'a, E> DerefMut for Http1Builder<'a, E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner
@@ -744,6 +746,7 @@ impl<E> Http2Builder<'_, E> {
     }
 }
 
+#[cfg(feature = "http2")]
 impl<'a, E> Deref for Http2Builder<'a, E> {
     type Target = Builder<E>;
 
@@ -752,6 +755,7 @@ impl<'a, E> Deref for Http2Builder<'a, E> {
     }
 }
 
+#[cfg(feature = "http2")]
 impl<'a, E> DerefMut for Http2Builder<'a, E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner
