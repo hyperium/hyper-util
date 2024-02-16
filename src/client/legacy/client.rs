@@ -51,7 +51,6 @@ struct Config {
 }
 
 /// Client errors
-#[derive(Debug)]
 pub struct Error {
     kind: ErrorKind,
     source: Option<Box<dyn StdError + Send + Sync>>,
@@ -1502,6 +1501,17 @@ impl fmt::Debug for Builder {
 }
 
 // ==== impl Error ====
+
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut f = f.debug_tuple("hyper_util::client::legacy::Error");
+        f.field(&self.kind);
+        if let Some(ref cause) = self.cause {
+            f.field(cause);
+        }
+        f.finish()
+    }
+}
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
