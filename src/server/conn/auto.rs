@@ -7,7 +7,7 @@ use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::{error::Error as StdError, io, marker::Unpin, time::Duration};
+use std::{error::Error as StdError, io, time::Duration};
 
 use bytes::Bytes;
 use http::{Request, Response};

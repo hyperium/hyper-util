@@ -6,7 +6,6 @@ use std::error::Error as StdError;
 use std::fmt::{self, Debug};
 use std::future::Future;
 use std::hash::Hash;
-use std::marker::Unpin;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};

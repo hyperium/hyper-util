@@ -248,7 +248,6 @@ where
 pub(super) mod sealed {
     use std::error::Error as StdError;
     use std::future::Future;
-    use std::marker::Unpin;
 
     use ::http::Uri;
     use hyper::rt::{Read, Write};
