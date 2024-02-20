@@ -679,7 +679,6 @@ fn connect(
     // keepalive timeout, it would be nice to use that instead of socket2,
     // and avoid the unsafe `into_raw_fd`/`from_raw_fd` dance...
     use socket2::{Domain, Protocol, Socket, Type};
-    use std::convert::TryInto;
 
     let domain = Domain::for_address(*addr);
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
