@@ -797,7 +797,7 @@ impl<T: Poolable + 'static, K: Key> Future for IdleTask<T, K> {
             // Set this task to run after the next deadline
             // If the poll missed the deadline by a lot, set the deadline
             // from the current time instead
-            *this.deadline = *this.deadline + *this.duration;
+            *this.deadline += *this.duration;
             if *this.deadline < Instant::now() - Duration::from_millis(5) {
                 *this.deadline = Instant::now() + *this.duration;
             }
