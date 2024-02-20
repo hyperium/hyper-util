@@ -215,7 +215,7 @@ where
 
             // We starts as H2 and switch to H1 when we don't get the preface.
             if buf.filled().len() == len
-                || &buf.filled()[len..] != &H2_PREFACE[len..buf.filled().len()]
+                || buf.filled()[len..] != H2_PREFACE[len..buf.filled().len()]
             {
                 *this.version = Version::H1;
                 break;
