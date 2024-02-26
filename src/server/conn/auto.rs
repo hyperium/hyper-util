@@ -174,6 +174,7 @@ where
         buf: [MaybeUninit::uninit(); 24],
         filled: 0,
         version: Version::H2,
+        cancelled: false,
         _pin: PhantomPinned,
     }
 }
@@ -185,9 +186,16 @@ pin_project! {
         // the amount of `buf` thats been filled
         filled: usize,
         version: Version,
+        cancelled: bool,
         // Make this future `!Unpin` for compatibility with async trait methods.
         #[pin]
         _pin: PhantomPinned,
+    }
+}
+
+impl<I> ReadVersion<I> {
+    pub fn cancel(self: Pin<&mut Self>) {
+        *self.project().cancelled = true;
     }
 }
 
@@ -199,6 +207,9 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
+        if *this.cancelled {
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::Interrupted, "Cancelled")));
+        }
 
         let mut buf = ReadBuf::uninit(&mut *this.buf);
         // SAFETY: `this.filled` tracks how many bytes have been read (and thus initialized) and
@@ -296,7 +307,7 @@ where
     /// `Connection::poll` has resolved, this does nothing.
     pub fn graceful_shutdown(self: Pin<&mut Self>) {
         match self.project().state.project() {
-            ConnStateProj::ReadVersion { .. } => {}
+            ConnStateProj::ReadVersion { read_version, .. } => read_version.cancel(),
             #[cfg(feature = "http1")]
             ConnStateProj::H1 { conn } => conn.graceful_shutdown(),
             #[cfg(feature = "http2")]
@@ -420,7 +431,7 @@ where
     /// called after `UpgradeableConnection::poll` has resolved, this does nothing.
     pub fn graceful_shutdown(self: Pin<&mut Self>) {
         match self.project().state.project() {
-            UpgradeableConnStateProj::ReadVersion { .. } => {}
+            UpgradeableConnStateProj::ReadVersion { read_version, .. } => read_version.cancel(),
             #[cfg(feature = "http1")]
             UpgradeableConnStateProj::H1 { conn } => conn.graceful_shutdown(),
             #[cfg(feature = "http2")]
