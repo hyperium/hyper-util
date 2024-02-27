@@ -171,7 +171,7 @@ where
     }
 }
 
-/// A future that blocks until a graceful shutdown is complete.
+/// A future that waits until the graceful shutdown is completed.
 pub struct GracefulWaiter {
     state: GracefulWaiterState,
 }
