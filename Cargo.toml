@@ -29,12 +29,13 @@ tracing = { version = "0.1", default-features = false, features = ["std"], optio
 tokio = { version = "1", optional = true, features = ["net", "rt", "time"] }
 tower-service ={ version = "0.3", optional = true }
 tower = { version = "0.4.1", optional = true, features = ["make", "util"] }
+slab = { version = "0.4.9", optional = true }
 
 [dev-dependencies]
 hyper = { version = "1.1.0", features = ["full"] }
 bytes = "1"
 http-body-util = "0.1.0"
-tokio = { version = "1", features = ["macros", "test-util"] }
+tokio = { version = "1", features = ["macros", "test-util", "signal"] }
 tokio-test = "0.4"
 pretty_env_logger = "0.5"
 
@@ -50,6 +51,7 @@ full = [
     "client-legacy",
     "server",
     "server-auto",
+    "server-graceful",
     "service",
     "http1",
     "http2",
@@ -61,6 +63,7 @@ client-legacy = ["client"]
 
 server = ["hyper/server"]
 server-auto = ["server", "http1", "http2"]
+server-graceful = ["dep:slab"]
 
 service = ["dep:tower", "dep:tower-service"]
 
@@ -75,3 +78,7 @@ __internal_happy_eyeballs_tests = []
 [[example]]
 name = "client"
 required-features = ["client-legacy", "http1", "tokio"]
+
+[[example]]
+name = "server_graceful"
+required-features = ["tokio", "server-graceful", "server-auto"]
