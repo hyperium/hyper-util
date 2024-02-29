@@ -1,3 +1,16 @@
+# 0.1.3 (2024-01-31)
+
+### Added
+
+- Add `Error::is_connect()` which returns true if error came from client `Connect`.
+- Add timer support to `legacy` pool.
+- Add support to enable http1/http2 parts of `auto::Builder` individually.
+
+### Fixed
+
+- Fix `auto` connection so it can handle requests shorter than the h2 preface.
+- Fix `legacy::Client` to no longer error when keep-alive is diabled.
+
 # 0.1.2 (2023-12-20)
 
 ### Added

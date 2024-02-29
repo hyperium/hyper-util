@@ -1,21 +1,12 @@
 #![allow(missing_docs)]
 
-macro_rules! ready {
-    ($e:expr) => {
-        match $e {
-            std::task::Poll::Ready(v) => v,
-            std::task::Poll::Pending => return std::task::Poll::Pending,
-        }
-    };
-}
-
-pub(crate) use ready;
 pub(crate) mod exec;
 #[cfg(feature = "client")]
 mod lazy;
 pub(crate) mod rewind;
 #[cfg(feature = "client")]
 mod sync;
+pub(crate) mod timer;
 
 #[cfg(feature = "client")]
 pub(crate) use exec::Exec;

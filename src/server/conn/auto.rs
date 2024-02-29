@@ -3,35 +3,63 @@
 use futures_util::ready;
 use hyper::service::HttpService;
 use std::future::Future;
-use std::io::{Error as IoError, ErrorKind, Result as IoResult};
 use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::{error::Error as StdError, marker::Unpin, time::Duration};
+use std::{error::Error as StdError, io, time::Duration};
 
 use bytes::Bytes;
 use http::{Request, Response};
 use http_body::Body;
 use hyper::{
     body::Incoming,
-    rt::{bounds::Http2ServerConnExec, Read, ReadBuf, Timer, Write},
-    server::conn::{http1, http2},
+    rt::{Read, ReadBuf, Timer, Write},
     service::Service,
 };
+
+#[cfg(feature = "http1")]
+use hyper::server::conn::http1;
+
+#[cfg(feature = "http2")]
+use hyper::{rt::bounds::Http2ServerConnExec, server::conn::http2};
+
+#[cfg(any(not(feature = "http2"), not(feature = "http1")))]
+use std::marker::PhantomData;
+
 use pin_project_lite::pin_project;
 
 use crate::common::rewind::Rewind;
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+type Error = Box<dyn std::error::Error + Send + Sync>;
+
+type Result<T> = std::result::Result<T, Error>;
 
 const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
+/// Exactly equivalent to [`Http2ServerConnExec`].
+#[cfg(feature = "http2")]
+pub trait HttpServerConnExec<A, B: Body>: Http2ServerConnExec<A, B> {}
+
+#[cfg(feature = "http2")]
+impl<A, B: Body, T: Http2ServerConnExec<A, B>> HttpServerConnExec<A, B> for T {}
+
+/// Exactly equivalent to [`Http2ServerConnExec`].
+#[cfg(not(feature = "http2"))]
+pub trait HttpServerConnExec<A, B: Body> {}
+
+#[cfg(not(feature = "http2"))]
+impl<A, B: Body, T> HttpServerConnExec<A, B> for T {}
 
 /// Http1 or Http2 connection builder.
 #[derive(Clone, Debug)]
 pub struct Builder<E> {
+    #[cfg(feature = "http1")]
     http1: http1::Builder,
+    #[cfg(feature = "http2")]
     http2: http2::Builder<E>,
+    #[cfg(not(feature = "http2"))]
+    _executor: E,
 }
 
 impl<E> Builder<E> {
@@ -52,17 +80,23 @@ impl<E> Builder<E> {
     /// ```
     pub fn new(executor: E) -> Self {
         Self {
+            #[cfg(feature = "http1")]
             http1: http1::Builder::new(),
+            #[cfg(feature = "http2")]
             http2: http2::Builder::new(executor),
+            #[cfg(not(feature = "http2"))]
+            _executor: executor,
         }
     }
 
     /// Http1 configuration.
+    #[cfg(feature = "http1")]
     pub fn http1(&mut self) -> Http1Builder<'_, E> {
         Http1Builder { inner: self }
     }
 
     /// Http2 configuration.
+    #[cfg(feature = "http2")]
     pub fn http2(&mut self) -> Http2Builder<'_, E> {
         Http2Builder { inner: self }
     }
@@ -76,7 +110,7 @@ impl<E> Builder<E> {
         B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
-        E: Http2ServerConnExec<S::Future, B>,
+        E: HttpServerConnExec<S::Future, B>,
     {
         Connection {
             state: ConnState::ReadVersion {
@@ -102,7 +136,7 @@ impl<E> Builder<E> {
         B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + Send + 'static,
-        E: Http2ServerConnExec<S::Future, B>,
+        E: HttpServerConnExec<S::Future, B>,
     {
         UpgradeableConnection {
             state: UpgradeableConnState::ReadVersion {
@@ -113,10 +147,22 @@ impl<E> Builder<E> {
         }
     }
 }
+
 #[derive(Copy, Clone)]
 enum Version {
     H1,
     H2,
+}
+
+impl Version {
+    #[must_use]
+    #[cfg(any(not(feature = "http2"), not(feature = "http1")))]
+    pub fn unsupported(self) -> Error {
+        match self {
+            Version::H1 => Error::from("HTTP/1 is not supported"),
+            Version::H2 => Error::from("HTTP/2 is not supported"),
+        }
+    }
 }
 
 fn read_version<I>(io: I) -> ReadVersion<I>
@@ -127,7 +173,8 @@ where
         io: Some(io),
         buf: [MaybeUninit::uninit(); 24],
         filled: 0,
-        version: Version::H1,
+        version: Version::H2,
+        cancelled: false,
         _pin: PhantomPinned,
     }
 }
@@ -139,9 +186,16 @@ pin_project! {
         // the amount of `buf` thats been filled
         filled: usize,
         version: Version,
+        cancelled: bool,
         // Make this future `!Unpin` for compatibility with async trait methods.
         #[pin]
         _pin: PhantomPinned,
+    }
+}
+
+impl<I> ReadVersion<I> {
+    pub fn cancel(self: Pin<&mut Self>) {
+        *self.project().cancelled = true;
     }
 }
 
@@ -149,10 +203,13 @@ impl<I> Future for ReadVersion<I>
 where
     I: Read + Unpin,
 {
-    type Output = IoResult<(Version, Rewind<I>)>;
+    type Output = io::Result<(Version, Rewind<I>)>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
+        if *this.cancelled {
+            return Poll::Ready(Err(io::Error::new(io::ErrorKind::Interrupted, "Cancelled")));
+        }
 
         let mut buf = ReadBuf::uninit(&mut *this.buf);
         // SAFETY: `this.filled` tracks how many bytes have been read (and thus initialized) and
@@ -161,27 +218,21 @@ where
             buf.unfilled().advance(*this.filled);
         };
 
+        // We start as H2 and switch to H1 as soon as we don't have the preface.
         while buf.filled().len() < H2_PREFACE.len() {
-            if buf.filled() != &H2_PREFACE[0..buf.filled().len()] {
-                let io = this.io.take().unwrap();
-                let buf = buf.filled().to_vec();
-                return Poll::Ready(Ok((
-                    *this.version,
-                    Rewind::new_buffered(io, Bytes::from(buf)),
-                )));
-            } else {
-                // if our buffer is empty, then we need to read some data to continue.
-                let len = buf.filled().len();
-                ready!(Pin::new(this.io.as_mut().unwrap()).poll_read(cx, buf.unfilled()))?;
-                *this.filled = buf.filled().len();
-                if buf.filled().len() == len {
-                    return Err(IoError::new(ErrorKind::UnexpectedEof, "early eof")).into();
-                }
+            let len = buf.filled().len();
+            ready!(Pin::new(this.io.as_mut().unwrap()).poll_read(cx, buf.unfilled()))?;
+            *this.filled = buf.filled().len();
+
+            // We starts as H2 and switch to H1 when we don't get the preface.
+            if buf.filled().len() == len
+                || buf.filled()[len..] != H2_PREFACE[len..buf.filled().len()]
+            {
+                *this.version = Version::H1;
+                break;
             }
         }
-        if buf.filled() == H2_PREFACE {
-            *this.version = Version::H2;
-        }
+
         let io = this.io.take().unwrap();
         let buf = buf.filled().to_vec();
         Poll::Ready(Ok((
@@ -202,6 +253,18 @@ pin_project! {
     }
 }
 
+#[cfg(feature = "http1")]
+type Http1Connection<I, S> = hyper::server::conn::http1::Connection<Rewind<I>, S>;
+
+#[cfg(not(feature = "http1"))]
+type Http1Connection<I, S> = (PhantomData<I>, PhantomData<S>);
+
+#[cfg(feature = "http2")]
+type Http2Connection<I, S, E> = hyper::server::conn::http2::Connection<Rewind<I>, S, E>;
+
+#[cfg(not(feature = "http2"))]
+type Http2Connection<I, S, E> = (PhantomData<I>, PhantomData<S>, PhantomData<E>);
+
 pin_project! {
     #[project = ConnStateProj]
     enum ConnState<'a, I, S, E>
@@ -216,11 +279,11 @@ pin_project! {
         },
         H1 {
             #[pin]
-            conn: hyper::server::conn::http1::Connection<Rewind<I>, S>,
+            conn: Http1Connection<I, S>,
         },
         H2 {
             #[pin]
-            conn: hyper::server::conn::http2::Connection<Rewind<I>, S, E>,
+            conn: Http2Connection<I, S, E>,
         },
     }
 }
@@ -232,7 +295,7 @@ where
     I: Read + Write + Unpin,
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
-    E: Http2ServerConnExec<S::Future, B>,
+    E: HttpServerConnExec<S::Future, B>,
 {
     /// Start a graceful shutdown process for this connection.
     ///
@@ -244,9 +307,13 @@ where
     /// `Connection::poll` has resolved, this does nothing.
     pub fn graceful_shutdown(self: Pin<&mut Self>) {
         match self.project().state.project() {
-            ConnStateProj::ReadVersion { .. } => {}
+            ConnStateProj::ReadVersion { read_version, .. } => read_version.cancel(),
+            #[cfg(feature = "http1")]
             ConnStateProj::H1 { conn } => conn.graceful_shutdown(),
+            #[cfg(feature = "http2")]
             ConnStateProj::H2 { conn } => conn.graceful_shutdown(),
+            #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+            _ => unreachable!(),
         }
     }
 }
@@ -259,7 +326,7 @@ where
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
     I: Read + Write + Unpin + 'static,
-    E: Http2ServerConnExec<S::Future, B>,
+    E: HttpServerConnExec<S::Future, B>,
 {
     type Output = Result<()>;
 
@@ -276,22 +343,30 @@ where
                     let (version, io) = ready!(read_version.poll(cx))?;
                     let service = service.take().unwrap();
                     match version {
+                        #[cfg(feature = "http1")]
                         Version::H1 => {
                             let conn = builder.http1.serve_connection(io, service);
                             this.state.set(ConnState::H1 { conn });
                         }
+                        #[cfg(feature = "http2")]
                         Version::H2 => {
                             let conn = builder.http2.serve_connection(io, service);
                             this.state.set(ConnState::H2 { conn });
                         }
+                        #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+                        _ => return Poll::Ready(Err(version.unsupported())),
                     }
                 }
+                #[cfg(feature = "http1")]
                 ConnStateProj::H1 { conn } => {
                     return conn.poll(cx).map_err(Into::into);
                 }
+                #[cfg(feature = "http2")]
                 ConnStateProj::H2 { conn } => {
                     return conn.poll(cx).map_err(Into::into);
                 }
+                #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+                _ => unreachable!(),
             }
         }
     }
@@ -308,6 +383,12 @@ pin_project! {
     }
 }
 
+#[cfg(feature = "http1")]
+type Http1UpgradeableConnection<I, S> = hyper::server::conn::http1::UpgradeableConnection<I, S>;
+
+#[cfg(not(feature = "http1"))]
+type Http1UpgradeableConnection<I, S> = (PhantomData<I>, PhantomData<S>);
+
 pin_project! {
     #[project = UpgradeableConnStateProj]
     enum UpgradeableConnState<'a, I, S, E>
@@ -322,11 +403,11 @@ pin_project! {
         },
         H1 {
             #[pin]
-            conn: hyper::server::conn::http1::UpgradeableConnection<Rewind<I>, S>,
+            conn: Http1UpgradeableConnection<Rewind<I>, S>,
         },
         H2 {
             #[pin]
-            conn: hyper::server::conn::http2::Connection<Rewind<I>, S, E>,
+            conn: Http2Connection<I, S, E>,
         },
     }
 }
@@ -338,7 +419,7 @@ where
     I: Read + Write + Unpin,
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
-    E: Http2ServerConnExec<S::Future, B>,
+    E: HttpServerConnExec<S::Future, B>,
 {
     /// Start a graceful shutdown process for this connection.
     ///
@@ -350,9 +431,13 @@ where
     /// called after `UpgradeableConnection::poll` has resolved, this does nothing.
     pub fn graceful_shutdown(self: Pin<&mut Self>) {
         match self.project().state.project() {
-            UpgradeableConnStateProj::ReadVersion { .. } => {}
+            UpgradeableConnStateProj::ReadVersion { read_version, .. } => read_version.cancel(),
+            #[cfg(feature = "http1")]
             UpgradeableConnStateProj::H1 { conn } => conn.graceful_shutdown(),
+            #[cfg(feature = "http2")]
             UpgradeableConnStateProj::H2 { conn } => conn.graceful_shutdown(),
+            #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+            _ => unreachable!(),
         }
     }
 }
@@ -365,7 +450,7 @@ where
     B: Body + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
     I: Read + Write + Unpin + Send + 'static,
-    E: Http2ServerConnExec<S::Future, B>,
+    E: HttpServerConnExec<S::Future, B>,
 {
     type Output = Result<()>;
 
@@ -382,38 +467,47 @@ where
                     let (version, io) = ready!(read_version.poll(cx))?;
                     let service = service.take().unwrap();
                     match version {
+                        #[cfg(feature = "http1")]
                         Version::H1 => {
                             let conn = builder.http1.serve_connection(io, service).with_upgrades();
                             this.state.set(UpgradeableConnState::H1 { conn });
                         }
+                        #[cfg(feature = "http2")]
                         Version::H2 => {
                             let conn = builder.http2.serve_connection(io, service);
                             this.state.set(UpgradeableConnState::H2 { conn });
                         }
+                        #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+                        _ => return Poll::Ready(Err(version.unsupported())),
                     }
                 }
+                #[cfg(feature = "http1")]
                 UpgradeableConnStateProj::H1 { conn } => {
                     return conn.poll(cx).map_err(Into::into);
                 }
+                #[cfg(feature = "http2")]
                 UpgradeableConnStateProj::H2 { conn } => {
                     return conn.poll(cx).map_err(Into::into);
                 }
+                #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+                _ => unreachable!(),
             }
         }
     }
 }
 
 /// Http1 part of builder.
+#[cfg(feature = "http1")]
 pub struct Http1Builder<'a, E> {
     inner: &'a mut Builder<E>,
 }
 
+#[cfg(feature = "http1")]
 impl<E> Http1Builder<'_, E> {
     /// Http2 configuration.
+    #[cfg(feature = "http2")]
     pub fn http2(&mut self) -> Http2Builder<'_, E> {
-        Http2Builder {
-            inner: &mut self.inner,
-        }
+        Http2Builder { inner: self.inner }
     }
 
     /// Set whether HTTP/1 connections should support half-closures.
@@ -524,6 +618,7 @@ impl<E> Http1Builder<'_, E> {
     }
 
     /// Bind a connection together with a [`Service`].
+    #[cfg(feature = "http2")]
     pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
@@ -532,23 +627,49 @@ impl<E> Http1Builder<'_, E> {
         B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
-        E: Http2ServerConnExec<S::Future, B>,
+        E: HttpServerConnExec<S::Future, B>,
+    {
+        self.inner.serve_connection(io, service).await
+    }
+
+    /// Bind a connection together with a [`Service`].
+    #[cfg(not(feature = "http2"))]
+    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
+    where
+        S: Service<Request<Incoming>, Response = Response<B>>,
+        S::Future: 'static,
+        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B: Body + 'static,
+        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        I: Read + Write + Unpin + 'static,
     {
         self.inner.serve_connection(io, service).await
     }
 }
 
 /// Http2 part of builder.
+#[cfg(feature = "http2")]
 pub struct Http2Builder<'a, E> {
     inner: &'a mut Builder<E>,
 }
 
+#[cfg(feature = "http2")]
 impl<E> Http2Builder<'_, E> {
+    #[cfg(feature = "http1")]
     /// Http1 configuration.
     pub fn http1(&mut self) -> Http1Builder<'_, E> {
-        Http1Builder {
-            inner: &mut self.inner,
-        }
+        Http1Builder { inner: self.inner }
+    }
+
+    /// Configures the maximum number of pending reset streams allowed before a GOAWAY will be sent.
+    ///
+    /// This will default to the default value set by the [`h2` crate](https://crates.io/crates/h2).
+    /// As of v0.4.0, it is 20.
+    ///
+    /// See <https://github.com/hyperium/hyper/issues/2877> for more information.
+    pub fn max_pending_accept_reset_streams(&mut self, max: impl Into<Option<usize>>) -> &mut Self {
+        self.inner.http2.max_pending_accept_reset_streams(max);
+        self
     }
 
     /// Configures the maximum number of pending reset streams allowed before a GOAWAY will be sent.
@@ -690,7 +811,7 @@ impl<E> Http2Builder<'_, E> {
         B: Body + 'static,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
-        E: Http2ServerConnExec<S::Future, B>,
+        E: HttpServerConnExec<S::Future, B>,
     {
         self.inner.serve_connection(io, service).await
     }
