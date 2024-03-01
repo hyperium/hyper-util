@@ -57,7 +57,7 @@ full = [
 ]
 
 client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower", "dep:tower-service"]
-client-legacy = ["client"]
+client-legacy = ["client", "dep:socket2"]
 
 server = ["hyper/server"]
 server-auto = ["server", "http1", "http2"]
@@ -67,7 +67,7 @@ service = ["dep:tower", "dep:tower-service"]
 http1 = ["hyper/http1"]
 http2 = ["hyper/http2"]
 
-tokio = ["dep:tokio", "dep:socket2"]
+tokio = ["dep:tokio"]
 
 # internal features used in CI
 __internal_happy_eyeballs_tests = []
