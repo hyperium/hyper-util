@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 hyper = "1.2.0"
-futures-util = { version = "0.3.16", default-features = false }
+futures-util = { version = "0.3.16", default-features = false, optional = true }
 http = "1.0"
 http-body = "1.0.0"
 bytes = "1"
@@ -57,10 +57,10 @@ full = [
 ]
 
 client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower", "dep:tower-service"]
-client-legacy = ["client", "dep:socket2"]
+client-legacy = ["client", "dep:futures-util", "dep:socket2"]
 
 server = ["hyper/server"]
-server-auto = ["server", "http1", "http2"]
+server-auto = ["server", "http1", "http2", "dep:futures-util"]
 
 service = ["dep:tower", "dep:tower-service"]
 
@@ -75,4 +75,3 @@ __internal_happy_eyeballs_tests = []
 [[example]]
 name = "client"
 required-features = ["client-legacy", "http1", "tokio"]
-
