@@ -1,4 +1,4 @@
 //! Connection utilities.
 
-#[cfg(any(feature = "http1", feature = "http2"))]
+#[cfg(feature = "server-auto")]
 pub mod auto;
