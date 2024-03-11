@@ -1234,6 +1234,28 @@ impl Builder {
         self
     }
 
+    /// Set the maximum number of headers.
+    ///
+    /// When a response is received, the parser will reserve a buffer to store headers for optimal
+    /// performance.
+    ///
+    /// If client receives more headers than the buffer size, the error "message header too large"
+    /// is returned.
+    ///
+    /// The headers is allocated on the stack by default, which has higher performance. After
+    /// setting this value, headers will be allocated in heap memory, that is, heap memory
+    /// allocation will occur for each response, and there will be a performance drop of about 5%.
+    ///
+    /// Note that this setting does not affect HTTP/2.
+    ///
+    /// Default is 100.
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
+    pub fn http1_max_headers(&mut self, val: usize) -> &mut Self {
+        self.h1_builder.max_headers(val);
+        self
+    }
+
     /// Set whether HTTP/0.9 responses should be tolerated.
     ///
     /// Default is false.

@@ -560,6 +560,26 @@ impl<E> Http1Builder<'_, E> {
         self
     }
 
+    /// Set the maximum number of headers.
+    ///
+    /// When a request is received, the parser will reserve a buffer to store headers for optimal
+    /// performance.
+    ///
+    /// If server receives more headers than the buffer size, it responds to the client with
+    /// "431 Request Header Fields Too Large".
+    ///
+    /// The headers is allocated on the stack by default, which has higher performance. After
+    /// setting this value, headers will be allocated in heap memory, that is, heap memory
+    /// allocation will occur for each request, and there will be a performance drop of about 5%.
+    ///
+    /// Note that this setting does not affect HTTP/2.
+    ///
+    /// Default is 100.
+    pub fn max_headers(&mut self, val: usize) -> &mut Self {
+        self.inner.http1.max_headers(val);
+        self
+    }
+
     /// Set a timeout for reading client request headers. If a client does not
     /// transmit the entire header within this time, the connection is closed.
     ///
