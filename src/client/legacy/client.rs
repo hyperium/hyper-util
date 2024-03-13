@@ -633,7 +633,7 @@ where
 impl<C: Clone, B> Clone for Client<C, B> {
     fn clone(&self) -> Client<C, B> {
         Client {
-            config: self.config.clone(),
+            config: self.config,
             exec: self.exec.clone(),
             #[cfg(feature = "http1")]
             h1_builder: self.h1_builder.clone(),
@@ -925,7 +925,7 @@ fn set_scheme(uri: &mut Uri, scheme: Scheme) {
         uri.scheme().is_none(),
         "set_scheme expects no existing scheme"
     );
-    let old = std::mem::replace(uri, Uri::default());
+    let old = std::mem::take(uri);
     let mut parts: ::http::uri::Parts = old.into();
     parts.scheme = Some(scheme);
     parts.path_and_query = Some("/".parse().expect("slash is a valid path"));
@@ -1153,7 +1153,7 @@ impl Builder {
 
     /// Sets whether invalid header lines should be silently ignored in HTTP/1 responses.
     ///
-    /// This mimicks the behaviour of major browsers. You probably don't want this.
+    /// This mimics the behaviour of major browsers. You probably don't want this.
     /// You should only want this if you are implementing a proxy whose main
     /// purpose is to sit in front of browsers whose users access arbitrary content
     /// which may be malformed, and they expect everything that works without
@@ -1234,6 +1234,28 @@ impl Builder {
         self
     }
 
+    /// Set the maximum number of headers.
+    ///
+    /// When a response is received, the parser will reserve a buffer to store headers for optimal
+    /// performance.
+    ///
+    /// If client receives more headers than the buffer size, the error "message header too large"
+    /// is returned.
+    ///
+    /// The headers is allocated on the stack by default, which has higher performance. After
+    /// setting this value, headers will be allocated in heap memory, that is, heap memory
+    /// allocation will occur for each response, and there will be a performance drop of about 5%.
+    ///
+    /// Note that this setting does not affect HTTP/2.
+    ///
+    /// Default is 100.
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
+    pub fn http1_max_headers(&mut self, val: usize) -> &mut Self {
+        self.h1_builder.max_headers(val);
+        self
+    }
+
     /// Set whether HTTP/0.9 responses should be tolerated.
     ///
     /// Default is false.
@@ -1288,6 +1310,26 @@ impl Builder {
         sz: impl Into<Option<u32>>,
     ) -> &mut Self {
         self.h2_builder.initial_connection_window_size(sz.into());
+        self
+    }
+
+    /// Sets the initial maximum of locally initiated (send) streams.
+    ///
+    /// This value will be overwritten by the value included in the initial
+    /// SETTINGS frame received from the peer as part of a [connection preface].
+    ///
+    /// Passing `None` will do nothing.
+    ///
+    /// If not set, hyper will use a default.
+    ///
+    /// [connection preface]: https://httpwg.org/specs/rfc9113.html#preface
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+    pub fn http2_initial_max_send_streams(
+        &mut self,
+        initial: impl Into<Option<usize>>,
+    ) -> &mut Self {
+        self.h2_builder.initial_max_send_streams(initial);
         self
     }
 
@@ -1516,6 +1558,11 @@ impl StdError for Error {
 }
 
 impl Error {
+    /// Returns true if this was an error from `Connect`.
+    pub fn is_connect(&self) -> bool {
+        matches!(self.kind, ErrorKind::Connect)
+    }
+
     fn is_canceled(&self) -> bool {
         matches!(self.kind, ErrorKind::Canceled)
     }

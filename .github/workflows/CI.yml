@@ -18,6 +18,7 @@ jobs:
       - msrv
       - miri
       - features
+      - semver
       - doc
     steps:
       - run: exit 0
@@ -114,6 +115,18 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
 
       - run: cargo hack --no-dev-deps check --feature-powerset --depth 2
+
+  semver:
+    name: semver
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          feature-group: only-explicit-features
+          features: full
+          release-type: minor
 
   doc:
     name: Build docs

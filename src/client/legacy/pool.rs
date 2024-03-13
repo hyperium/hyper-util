@@ -6,7 +6,6 @@ use std::error::Error as StdError;
 use std::fmt::{self, Debug};
 use std::future::Future;
 use std::hash::Hash;
-use std::marker::Unpin;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
@@ -388,7 +387,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             Some(value) => {
                 // borrow-check scope...
                 {
-                    let idle_list = self.idle.entry(key.clone()).or_insert_with(Vec::new);
+                    let idle_list = self.idle.entry(key.clone()).or_default();
                     if self.max_idle_per_host <= idle_list.len() {
                         trace!("max idle per host for {:?}, dropping connection", key);
                         return;
@@ -798,7 +797,7 @@ impl<T: Poolable + 'static, K: Key> Future for IdleTask<T, K> {
             // Set this task to run after the next deadline
             // If the poll missed the deadline by a lot, set the deadline
             // from the current time instead
-            *this.deadline = *this.deadline + *this.duration;
+            *this.deadline += *this.duration;
             if *this.deadline < Instant::now() - Duration::from_millis(5) {
                 *this.deadline = Instant::now() + *this.duration;
             }
