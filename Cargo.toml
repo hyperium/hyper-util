@@ -16,6 +16,9 @@ edition = "2021"
 features = ["full"]
 rustdoc-args = ["--cfg", "docsrs"]
 
+[patch.crates-io]
+hyper = { git = "https://github.com/hyperium/hyper", rev = "refs/pull/3591/head" }
+
 [dependencies]
 hyper = "1.2.0"
 futures-util = { version = "0.3.16", default-features = false }
