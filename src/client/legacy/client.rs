@@ -18,6 +18,7 @@ use hyper::rt::Timer;
 use hyper::{body::Body, Method, Request, Response, Uri, Version};
 use tracing::{debug, trace, warn};
 
+use super::connect::capture::CaptureConnectionExtension;
 #[cfg(feature = "tokio")]
 use super::connect::HttpConnector;
 use super::connect::{Alpn, Connect, Connected, Connection};
@@ -264,6 +265,10 @@ where
         pool_key: PoolKey,
     ) -> Result<Response<hyper::body::Incoming>, Error> {
         let mut pooled = self.connection_for(pool_key).await?;
+
+        req.extensions_mut()
+            .get_mut::<CaptureConnectionExtension>()
+            .map(|conn| conn.set(&pooled.conn_info));
 
         if pooled.is_http1() {
             if req.version() == Version::HTTP_2 {
