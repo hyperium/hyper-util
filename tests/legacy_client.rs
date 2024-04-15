@@ -18,7 +18,7 @@ use http_body_util::{Empty, Full, StreamBody};
 use hyper::body::Bytes;
 use hyper::body::Frame;
 use hyper::Request;
-use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::connect::{capture_connection, HttpConnector};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 
@@ -875,4 +875,36 @@ fn alpn_h2() {
         "after ALPN, no more connects"
     );
     drop(client);
+}
+
+#[cfg(not(miri))]
+#[test]
+fn capture_connection_on_client() {
+    let _ = pretty_env_logger::try_init();
+
+    let rt = runtime();
+    let connector = DebugConnector::new();
+
+    let client = Client::builder(TokioExecutor::new()).build(connector);
+
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = server.local_addr().unwrap();
+    thread::spawn(move || {
+        let mut sock = server.accept().unwrap().0;
+        //drop(server);
+        sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        sock.set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut buf = [0; 4096];
+        sock.read(&mut buf).expect("read 1");
+        sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .expect("write 1");
+    });
+    let mut req = Request::builder()
+        .uri(&*format!("http://{}/a", addr))
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let captured_conn = capture_connection(&mut req);
+    rt.block_on(client.request(req)).expect("200 OK");
+    assert!(captured_conn.connection_metadata().is_some());
 }
