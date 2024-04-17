@@ -18,7 +18,7 @@ use std::{
 
 /// A graceful shutdown watcher
 pub struct GracefulShutdown {
-    // state used to keep track of all futures that are being watched
+    // state used to keep track of all `Future`s that are being watched
     state: Arc<GracefulState>,
     // state that the watched futures to know when shutdown signal is received
     future_state: Arc<GracefulState>,
