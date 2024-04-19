@@ -29,6 +29,7 @@ tracing = { version = "0.1", default-features = false, features = ["std"], optio
 tokio = { version = "1", optional = true, default-features = false  }
 tower-service ={ version = "0.3", optional = true }
 tower = { version = "0.4.1", optional = true, default-features = false, features = ["make", "util"] }
+sync_wrapper = { version = "1", optional = true }
 
 [dev-dependencies]
 hyper = { version = "1.2.0", features = ["full"] }
@@ -57,7 +58,7 @@ full = [
 ]
 
 client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower", "dep:tower-service"]
-client-legacy = ["client", "dep:socket2", "tokio/sync"]
+client-legacy = ["client", "dep:socket2", "dep:sync_wrapper", "tokio/sync"]
 
 server = ["hyper/server"]
 server-auto = ["server", "http1", "http2"]
