@@ -438,12 +438,10 @@ where
     }
 }
 
-impl Connection for TokioIo<TcpStream> {
+impl Connection for TcpStream {
     fn connected(&self) -> Connected {
         let connected = Connected::new();
-        if let (Ok(remote_addr), Ok(local_addr)) =
-            (self.inner().peer_addr(), self.inner().local_addr())
-        {
+        if let (Ok(remote_addr), Ok(local_addr)) = (self.peer_addr(), self.local_addr()) {
             connected.extra(HttpInfo {
                 remote_addr,
                 local_addr,
@@ -451,6 +449,17 @@ impl Connection for TokioIo<TcpStream> {
         } else {
             connected
         }
+    }
+}
+
+// Implement `Connection` for generic `TokioIo<T>` so that external crates can
+// implement their own `HttpConnector` with `TokioIo<CustomTcpStream>`.
+impl<T> Connection for TokioIo<T>
+where
+    T: Connection,
+{
+    fn connected(&self) -> Connected {
+        self.inner().connected()
     }
 }
 
