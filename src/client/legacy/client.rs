@@ -1300,7 +1300,7 @@ impl Builder {
         &mut self,
         max: impl Into<Option<usize>>,
     ) -> &mut Self {
-        self.h2_builder.max_pending_accept_reset_streams = max.into();
+        self.h2_builder.max_pending_accept_reset_streams(max.into());
         self
     }
 
