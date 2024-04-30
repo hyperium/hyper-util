@@ -1519,7 +1519,7 @@ impl Builder {
         self
     }
 
-    /// Builder a client with this configuration and the default `HttpConnector`.
+    /// Build a client with this configuration and the default `HttpConnector`.
     #[cfg(feature = "tokio")]
     pub fn build_http<B>(&self) -> Client<HttpConnector, B>
     where
