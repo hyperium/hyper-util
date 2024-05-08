@@ -750,6 +750,10 @@ impl<B> PoolClient<B> {
         }
     }
 
+    fn is_poisoned(&self) -> bool {
+        self.conn_info.poisoned.poisoned()
+    }
+
     fn is_ready(&self) -> bool {
         match self.tx {
             #[cfg(feature = "http1")]
@@ -826,7 +830,7 @@ where
     B: Send + 'static,
 {
     fn is_open(&self) -> bool {
-        self.is_ready()
+        !self.is_poisoned() && self.is_ready()
     }
 
     fn reserve(self) -> pool::Reservation<Self> {

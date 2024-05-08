@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::task::Poll;
 use std::thread;
 use std::time::Duration;
@@ -891,7 +892,6 @@ fn capture_connection_on_client() {
     let addr = server.local_addr().unwrap();
     thread::spawn(move || {
         let mut sock = server.accept().unwrap().0;
-        //drop(server);
         sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         sock.set_write_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -907,4 +907,75 @@ fn capture_connection_on_client() {
     let captured_conn = capture_connection(&mut req);
     rt.block_on(client.request(req)).expect("200 OK");
     assert!(captured_conn.connection_metadata().is_some());
+}
+
+#[cfg(not(miri))]
+#[test]
+fn connection_poisoning() {
+    use std::sync::atomic::AtomicUsize;
+
+    let _ = pretty_env_logger::try_init();
+
+    let rt = runtime();
+    let connector = DebugConnector::new();
+
+    let client = Client::builder(TokioExecutor::new()).build(connector);
+
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = server.local_addr().unwrap();
+    let num_conns: Arc<AtomicUsize> = Default::default();
+    let num_requests: Arc<AtomicUsize> = Default::default();
+    let num_requests_tracker = num_requests.clone();
+    let num_conns_tracker = num_conns.clone();
+    thread::spawn(move || loop {
+        let mut sock = server.accept().unwrap().0;
+        num_conns_tracker.fetch_add(1, Ordering::Relaxed);
+        let num_requests_tracker = num_requests_tracker.clone();
+        thread::spawn(move || {
+            sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            sock.set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut buf = [0; 4096];
+            loop {
+                if sock.read(&mut buf).expect("read 1") > 0 {
+                    sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                        .expect("write 1");
+                    num_requests_tracker.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        });
+    });
+    let make_request = || {
+        Request::builder()
+            .uri(&*format!("http://{}/a", addr))
+            .body(Empty::<Bytes>::new())
+            .unwrap()
+    };
+    let mut req = make_request();
+    let captured_conn = capture_connection(&mut req);
+    rt.block_on(client.request(req)).expect("200 OK");
+    assert_eq!(num_conns.load(Ordering::SeqCst), 1);
+    assert_eq!(num_requests.load(Ordering::SeqCst), 1);
+
+    rt.block_on(client.request(make_request())).expect("200 OK");
+    rt.block_on(client.request(make_request())).expect("200 OK");
+    // Before poisoning the connection is reused
+    assert_eq!(num_conns.load(Ordering::SeqCst), 1);
+    assert_eq!(num_requests.load(Ordering::SeqCst), 3);
+    captured_conn
+        .connection_metadata()
+        .as_ref()
+        .unwrap()
+        .poison();
+
+    rt.block_on(client.request(make_request())).expect("200 OK");
+
+    // After poisoning, a new connection is established
+    assert_eq!(num_conns.load(Ordering::SeqCst), 2);
+    assert_eq!(num_requests.load(Ordering::SeqCst), 4);
+
+    rt.block_on(client.request(make_request())).expect("200 OK");
+    // another request can still reuse:
+    assert_eq!(num_conns.load(Ordering::SeqCst), 2);
+    assert_eq!(num_requests.load(Ordering::SeqCst), 5);
 }
