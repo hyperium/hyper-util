@@ -704,6 +704,27 @@ impl<E> Http1Builder<'_, E> {
     {
         self.inner.serve_connection(io, service).await
     }
+
+    /// Bind a connection together with a [`Service`], with the ability to
+    /// handle HTTP upgrades. This requires that the IO object implements
+    /// `Send`.
+    #[cfg(feature = "http2")]
+    pub fn serve_connection_with_upgrades<I, S, B>(
+        &self,
+        io: I,
+        service: S,
+    ) -> UpgradeableConnection<'_, I, S, E>
+    where
+        S: Service<Request<Incoming>, Response = Response<B>>,
+        S::Future: 'static,
+        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B: Body + 'static,
+        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        I: Read + Write + Unpin + Send + 'static,
+        E: HttpServerConnExec<S::Future, B>,
+    {
+        self.inner.serve_connection_with_upgrades(io, service)
+    }
 }
 
 /// Http2 part of builder.
@@ -862,6 +883,26 @@ impl<E> Http2Builder<'_, E> {
         E: HttpServerConnExec<S::Future, B>,
     {
         self.inner.serve_connection(io, service).await
+    }
+
+    /// Bind a connection together with a [`Service`], with the ability to
+    /// handle HTTP upgrades. This requires that the IO object implements
+    /// `Send`.
+    pub fn serve_connection_with_upgrades<I, S, B>(
+        &self,
+        io: I,
+        service: S,
+    ) -> UpgradeableConnection<'_, I, S, E>
+    where
+        S: Service<Request<Incoming>, Response = Response<B>>,
+        S::Future: 'static,
+        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B: Body + 'static,
+        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        I: Read + Write + Unpin + Send + 'static,
+        E: HttpServerConnExec<S::Future, B>,
+    {
+        self.inner.serve_connection_with_upgrades(io, service)
     }
 }
 
@@ -1072,7 +1113,10 @@ mod tests {
                         builder = builder.http2_only();
                     }
 
-                    builder.serve_connection(stream, service_fn(hello)).await;
+                    builder
+                        .max_header_list_size(4096)
+                        .serve_connection(stream, service_fn(hello))
+                        .await;
                 });
             }
         });

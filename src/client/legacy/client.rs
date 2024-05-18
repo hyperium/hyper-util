@@ -18,6 +18,7 @@ use hyper::rt::Timer;
 use hyper::{body::Body, Method, Request, Response, Uri, Version};
 use tracing::{debug, trace, warn};
 
+use super::connect::capture::CaptureConnectionExtension;
 #[cfg(feature = "tokio")]
 use super::connect::HttpConnector;
 use super::connect::{Alpn, Connect, Connected, Connection};
@@ -264,6 +265,10 @@ where
         pool_key: PoolKey,
     ) -> Result<Response<hyper::body::Incoming>, Error> {
         let mut pooled = self.connection_for(pool_key).await?;
+
+        req.extensions_mut()
+            .get_mut::<CaptureConnectionExtension>()
+            .map(|conn| conn.set(&pooled.conn_info));
 
         if pooled.is_http1() {
             if req.version() == Version::HTTP_2 {
@@ -1283,6 +1288,22 @@ impl Builder {
         self
     }
 
+    /// Configures the maximum number of pending reset streams allowed before a GOAWAY will be sent.
+    ///
+    /// This will default to the default value set by the [`h2` crate](https://crates.io/crates/h2).
+    /// As of v0.4.0, it is 20.
+    ///
+    /// See <https://github.com/hyperium/hyper/issues/2877> for more information.
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+    pub fn http2_max_pending_accept_reset_streams(
+        &mut self,
+        max: impl Into<Option<usize>>,
+    ) -> &mut Self {
+        self.h2_builder.max_pending_accept_reset_streams(max.into());
+        self
+    }
+
     /// Sets the [`SETTINGS_INITIAL_WINDOW_SIZE`][spec] option for HTTP2
     /// stream-level flow control.
     ///
@@ -1498,7 +1519,7 @@ impl Builder {
         self
     }
 
-    /// Builder a client with this configuration and the default `HttpConnector`.
+    /// Build a client with this configuration and the default `HttpConnector`.
     #[cfg(feature = "tokio")]
     pub fn build_http<B>(&self) -> Client<HttpConnector, B>
     where
