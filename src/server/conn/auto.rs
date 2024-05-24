@@ -178,10 +178,27 @@ impl<E> Builder<E> {
         E: HttpServerConnExec<S::Future, B>,
     {
         UpgradeableConnection {
-            state: UpgradeableConnState::ReadVersion {
-                read_version: read_version(io),
-                builder: self,
-                service: Some(service),
+            state: match self.version {
+                #[cfg(feature = "http1")]
+                Some(Version::H1) => {
+                    let io = Rewind::new_buffered(io, Bytes::new());
+                    UpgradeableConnState::H1 {
+                        conn: self.http1.serve_connection(io, service).with_upgrades(),
+                    }
+                },
+                #[cfg(feature = "http2")]
+                Some(Version::H2) => {
+                    let io = Rewind::new_buffered(io, Bytes::new());
+                    UpgradeableConnState::H2 {
+                        conn: self.http2.serve_connection(io, service),
+                    }
+                },
+                #[cfg(any(feature = "http1", feature = "http2"))]
+                _ => UpgradeableConnState::ReadVersion {
+                    read_version: read_version(io),
+                    builder: self,
+                    service: Some(service),
+                }
             },
         }
     }
@@ -1107,17 +1124,17 @@ mod tests {
                 let stream = TokioIo::new(stream);
                 tokio::task::spawn(async move {
                     let mut builder = auto::Builder::new(TokioExecutor::new());
-    
+
                     builder
                         .http2()
                         .max_header_list_size(4096);
-        
+
                     if h1_only {
                         builder = builder.http1_only();
                     } else if h2_only {
                         builder = builder.http2_only();
                     }
-        
+
                     builder
                         .serve_connection_with_upgrades(stream, service_fn(hello))
                         .await;
