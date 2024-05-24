@@ -1107,15 +1107,19 @@ mod tests {
                 let stream = TokioIo::new(stream);
                 tokio::task::spawn(async move {
                     let mut builder = auto::Builder::new(TokioExecutor::new());
+    
+                    builder
+                        .http2()
+                        .max_header_list_size(4096);
+        
                     if h1_only {
                         builder = builder.http1_only();
                     } else if h2_only {
                         builder = builder.http2_only();
                     }
-
+        
                     builder
-                        .max_header_list_size(4096)
-                        .serve_connection(stream, service_fn(hello))
+                        .serve_connection_with_upgrades(stream, service_fn(hello))
                         .await;
                 });
             }
