@@ -1004,7 +1004,7 @@ impl Builder {
             h2_builder: hyper::client::conn::http2::Builder::new(exec),
             pool_config: pool::Config {
                 idle_timeout: Some(Duration::from_secs(90)),
-                max_idle_per_host: std::usize::MAX,
+                max_idle_per_host: usize::MAX,
             },
             pool_timer: None,
         }
