@@ -1,6 +1,6 @@
 [package]
 name = "hyper-util"
-version = "0.1.3"
+version = "0.1.4"
 description = "hyper utilities"
 readme = "README.md"
 homepage = "https://hyper.rs"

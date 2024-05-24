@@ -1,3 +1,13 @@
+# 0.1.4 (2024-05-24)
+
+- Add `initial_max_send_streams()` to `legacy` client builder
+- Add `max_pending_accept_reset_streams()` to `legacy` client builder
+- Add `max_headers(usize)` to `auto` server builder
+- Add `http1_onl()` and `http2_only()` to `auto` server builder
+- Add connection capturing API to `legacy` client
+- Add `impl Connection for TokioIo`
+- Fix graceful shutdown hanging on reading the HTTP version
+
 # 0.1.3 (2024-01-31)
 
 ### Added
