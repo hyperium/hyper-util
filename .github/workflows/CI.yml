@@ -38,8 +38,14 @@ jobs:
     needs: [style]
     strategy:
       matrix:
-        rust: [ stable, beta, nightly ]
-        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        rust:
+          - stable
+          - beta
+          - nightly
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
