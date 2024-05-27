@@ -152,7 +152,7 @@ impl<E> Builder<E> {
             #[cfg(any(feature = "http1", feature = "http2"))]
             _ => ConnState::ReadVersion {
                 read_version: read_version(io),
-                builder: self,
+                builder: Cow::Borrowed(self),
                 service: Some(service),
             },
         };
@@ -180,7 +180,7 @@ impl<E> Builder<E> {
         UpgradeableConnection {
             state: UpgradeableConnState::ReadVersion {
                 read_version: read_version(io),
-                builder: self,
+                builder: Cow::Borrowed(self),
                 service: Some(service),
             },
         }
@@ -292,6 +292,22 @@ pin_project! {
     }
 }
 
+// A custom COW, since the libstd is has ToOwned bounds that are too eager.
+enum Cow<'a, T> {
+    Borrowed(&'a T),
+    Owned(T),
+}
+
+impl<'a, T> std::ops::Deref for Cow<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        match self {
+            Cow::Borrowed(t) => &*t,
+            Cow::Owned(ref t) => t,
+        }
+    }
+}
+
 #[cfg(feature = "http1")]
 type Http1Connection<I, S> = hyper::server::conn::http1::Connection<Rewind<I>, S>;
 
@@ -313,7 +329,7 @@ pin_project! {
         ReadVersion {
             #[pin]
             read_version: ReadVersion<I>,
-            builder: &'a Builder<E>,
+            builder: Cow<'a, Builder<E>>,
             service: Option<S>,
         },
         H1 {
@@ -353,6 +369,32 @@ where
             ConnStateProj::H2 { conn } => conn.graceful_shutdown(),
             #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
             _ => unreachable!(),
+        }
+    }
+
+    /// Make this Connection static, instead of borrowing from Builder.
+    pub fn into_owned(self) -> Connection<'static, I, S, E>
+    where
+        Builder<E>: Clone,
+    {
+        Connection {
+            state: match self.state {
+                ConnState::ReadVersion {
+                    read_version,
+                    builder,
+                    service,
+                } => ConnState::ReadVersion {
+                    read_version,
+                    service,
+                    builder: Cow::Owned(builder.clone()),
+                },
+                #[cfg(feature = "http1")]
+                ConnState::H1 { conn } => ConnState::H1 { conn },
+                #[cfg(feature = "http2")]
+                ConnState::H2 { conn } => ConnState::H2 { conn },
+                #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+                _ => unreachable!(),
+            },
         }
     }
 }
@@ -437,7 +479,7 @@ pin_project! {
         ReadVersion {
             #[pin]
             read_version: ReadVersion<I>,
-            builder: &'a Builder<E>,
+            builder: Cow<'a, Builder<E>>,
             service: Option<S>,
         },
         H1 {
@@ -477,6 +519,32 @@ where
             UpgradeableConnStateProj::H2 { conn } => conn.graceful_shutdown(),
             #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
             _ => unreachable!(),
+        }
+    }
+
+    /// Make this Connection static, instead of borrowing from Builder.
+    pub fn into_owned(self) -> UpgradeableConnection<'static, I, S, E>
+    where
+        Builder<E>: Clone,
+    {
+        UpgradeableConnection {
+            state: match self.state {
+                UpgradeableConnState::ReadVersion {
+                    read_version,
+                    builder,
+                    service,
+                } => UpgradeableConnState::ReadVersion {
+                    read_version,
+                    service,
+                    builder: Cow::Owned(builder.clone()),
+                },
+                #[cfg(feature = "http1")]
+                UpgradeableConnState::H1 { conn } => UpgradeableConnState::H1 { conn },
+                #[cfg(feature = "http2")]
+                UpgradeableConnState::H2 { conn } => UpgradeableConnState::H2 { conn },
+                #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
+                _ => unreachable!(),
+            },
         }
     }
 }
