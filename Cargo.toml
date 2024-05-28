@@ -35,7 +35,7 @@ tower = { version = "0.4.1", optional = true, default-features = false, features
 hyper = { version = "1.3.0", features = ["full"] }
 bytes = "1"
 http-body-util = "0.1.0"
-tokio = { version = "1", features = ["macros", "test-util"] }
+tokio = { version = "1", features = ["macros", "test-util", "signal"] }
 tokio-test = "0.4"
 pretty_env_logger = "0.5"
 
@@ -51,6 +51,7 @@ full = [
     "client-legacy",
     "server",
     "server-auto",
+    "server-graceful",
     "service",
     "http1",
     "http2",
@@ -62,6 +63,7 @@ client-legacy = ["client", "dep:socket2", "tokio/sync"]
 
 server = ["hyper/server"]
 server-auto = ["server", "http1", "http2"]
+server-graceful = ["server", "tokio/sync"]
 
 service = ["dep:tower", "dep:tower-service"]
 
@@ -80,3 +82,7 @@ required-features = ["client-legacy", "http1", "tokio"]
 [[example]]
 name = "server"
 required-features = ["server", "http1", "tokio"]
+
+[[example]]
+name = "server_graceful"
+required-features = ["tokio", "server-graceful", "server-auto"]
