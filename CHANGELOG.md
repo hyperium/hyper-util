@@ -1,3 +1,9 @@
+# 0.1.5 (2024-05-28)
+
+- Add `server::graceful::GracefulShutdown` helper to coordinate over many connections.
+- Add `server::conn::auto::Connection::into_owned()` to unlink lifetime from `Builder`.
+- Allow `service` module to be available with only `service` feature enabled.
+
 # 0.1.4 (2024-05-24)
 
 - Add `initial_max_send_streams()` to `legacy` client builder
