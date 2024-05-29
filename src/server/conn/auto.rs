@@ -1177,17 +1177,18 @@ mod tests {
                     let mut builder = auto::Builder::new(TokioExecutor::new());
                     if h1_only {
                         builder = builder.http1_only();
-                        builder.serve_connection(stream, service_fn(hello)).await;
+                        builder.serve_connection(stream, service_fn(hello)).await
                     } else if h2_only {
                         builder = builder.http2_only();
-                        builder.serve_connection(stream, service_fn(hello)).await;
+                        builder.serve_connection(stream, service_fn(hello)).await
                     } else {
                         builder
                             .http2()
                             .max_header_list_size(4096)
                             .serve_connection_with_upgrades(stream, service_fn(hello))
-                            .await;
+                            .await
                     }
+                    .unwrap();
                 });
             }
         });
