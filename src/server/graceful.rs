@@ -43,7 +43,6 @@ impl GracefulShutdown {
     /// This returns a `Future` which will complete once all watched
     /// connections have shutdown.
     pub async fn shutdown(self) {
-        // drop the rx immediately, or else it will hold us up
         let Self { tx } = self;
 
         // signal all the watched futures about the change
