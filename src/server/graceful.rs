@@ -19,19 +19,18 @@ use tokio::sync::watch;
 /// A graceful shutdown utility
 pub struct GracefulShutdown {
     tx: watch::Sender<()>,
-    rx: watch::Receiver<()>,
 }
 
 impl GracefulShutdown {
     /// Create a new graceful shutdown helper.
     pub fn new() -> Self {
-        let (tx, rx) = watch::channel(());
-        Self { tx, rx }
+        let (tx, _) = watch::channel(());
+        Self { tx }
     }
 
     /// Wrap a future for graceful shutdown watching.
     pub fn watch<C: GracefulConnection>(&self, conn: C) -> impl Future<Output = C::Output> {
-        let mut rx = self.rx.clone();
+        let mut rx = self.tx.subscribe();
         GracefulConnectionFuture::new(conn, async move {
             let _ = rx.changed().await;
             // hold onto the rx until the watched future is completed
@@ -44,9 +43,7 @@ impl GracefulShutdown {
     /// This returns a `Future` which will complete once all watched
     /// connections have shutdown.
     pub async fn shutdown(self) {
-        // drop the rx immediately, or else it will hold us up
-        let Self { tx, rx } = self;
-        drop(rx);
+        let Self { tx } = self;
 
         // signal all the watched futures about the change
         let _ = tx.send(());
