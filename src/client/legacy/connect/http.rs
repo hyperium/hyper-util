@@ -108,18 +108,29 @@ impl TcpKeepaliveConfig {
         }
     }
 
-    #[cfg(not(any(target_os = "openbsd", target_os = "redox", target_os = "solaris")))]
+    #[cfg(not(any(
+        target_os = "aix",
+        target_os = "openbsd",
+        target_os = "redox",
+        target_os = "solaris"
+    )))]
     fn ka_with_interval(ka: TcpKeepalive, interval: Duration, dirty: &mut bool) -> TcpKeepalive {
         *dirty = true;
         ka.with_interval(interval)
     }
 
-    #[cfg(any(target_os = "openbsd", target_os = "redox", target_os = "solaris"))]
+    #[cfg(any(
+        target_os = "aix",
+        target_os = "openbsd",
+        target_os = "redox",
+        target_os = "solaris"
+    ))]
     fn ka_with_interval(ka: TcpKeepalive, _: Duration, _: &mut bool) -> TcpKeepalive {
         ka // no-op as keepalive interval is not supported on this platform
     }
 
     #[cfg(not(any(
+        target_os = "aix",
         target_os = "openbsd",
         target_os = "redox",
         target_os = "solaris",
@@ -131,6 +142,7 @@ impl TcpKeepaliveConfig {
     }
 
     #[cfg(any(
+        target_os = "aix",
         target_os = "openbsd",
         target_os = "redox",
         target_os = "solaris",
