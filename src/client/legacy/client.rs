@@ -16,6 +16,7 @@ use http::uri::Scheme;
 use hyper::header::{HeaderValue, HOST};
 use hyper::rt::Timer;
 use hyper::{body::Body, Method, Request, Response, Uri, Version};
+use sync_wrapper::SyncWrapper;
 use tracing::{debug, trace, warn};
 
 use super::connect::capture::CaptureConnectionExtension;
@@ -24,7 +25,7 @@ use super::connect::HttpConnector;
 use super::connect::{Alpn, Connect, Connected, Connection};
 use super::pool::{self, Ver};
 
-use crate::common::{lazy as hyper_lazy, timer, Exec, Lazy, SyncWrapper};
+use crate::common::{lazy as hyper_lazy, timer, Exec, Lazy};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
