@@ -1,3 +1,8 @@
+# 0.1.6 (2024-07-01)
+
+- Add support for AIX operating system to `legacy` client.
+- Fix `legacy` client to better use dying pooled connections.
+
 # 0.1.5 (2024-05-28)
 
 - Add `server::graceful::GracefulShutdown` helper to coordinate over many connections.
