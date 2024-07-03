@@ -118,7 +118,9 @@ impl Service<Name> for GaiResolver {
     }
 
     fn call(&mut self, name: Name) -> Self::Future {
+        let current_span = tracing::Span::current();
         let blocking = tokio::task::spawn_blocking(move || {
+            let _enter = current_span.enter();
             debug!("resolving host={:?}", name.host);
             (&*name.host, 0)
                 .to_socket_addrs()
