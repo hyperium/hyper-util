@@ -42,6 +42,9 @@ pretty_env_logger = "0.5"
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
 pnet_datalink = "0.35.0"
 
+[patch.crates-io]
+hyper = { git = "https://github.com/hyperium/hyper.git", rev = "6c0d05e40d6bbd8739fc2ef5fecdc4690f083a83" }
+
 [features]
 default = []
 

@@ -139,7 +139,6 @@ impl<E> Builder<E> {
         let state = match self.version {
             #[cfg(feature = "http1")]
             Some(Version::H1) => {
-                let io = Rewind::new_buffered(io, Bytes::new());
                 let conn = self.http1.serve_connection(io, service);
                 ConnState::H1 { conn }
             }
@@ -309,7 +308,7 @@ impl<'a, T> std::ops::Deref for Cow<'a, T> {
 }
 
 #[cfg(feature = "http1")]
-type Http1Connection<I, S> = hyper::server::conn::http1::Connection<Rewind<I>, S>;
+type Http1Connection<I, S> = hyper::server::conn::http1::Connection<I, S>;
 
 #[cfg(not(feature = "http1"))]
 type Http1Connection<I, S> = (PhantomData<I>, PhantomData<S>);
@@ -426,7 +425,10 @@ where
                     match version {
                         #[cfg(feature = "http1")]
                         Version::H1 => {
-                            let conn = builder.http1.serve_connection(io, service);
+                            let (io, buffered) = io.into_inner();
+                            let conn = builder
+                                .http1
+                                .serve_buffered_connection(buffered, io, service);
                             this.state.set(ConnState::H1 { conn });
                         }
                         #[cfg(feature = "http2")]
@@ -484,7 +486,7 @@ pin_project! {
         },
         H1 {
             #[pin]
-            conn: Http1UpgradeableConnection<Rewind<I>, S>,
+            conn: Http1UpgradeableConnection<I, S>,
         },
         H2 {
             #[pin]
@@ -576,7 +578,11 @@ where
                     match version {
                         #[cfg(feature = "http1")]
                         Version::H1 => {
-                            let conn = builder.http1.serve_connection(io, service).with_upgrades();
+                            let (io, buffered) = io.into_inner();
+                            let conn = builder
+                                .http1
+                                .serve_buffered_connection(buffered, io, service)
+                                .with_upgrades();
                             this.state.set(UpgradeableConnState::H1 { conn });
                         }
                         #[cfg(feature = "http2")]
