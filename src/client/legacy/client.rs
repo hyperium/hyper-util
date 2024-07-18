@@ -56,6 +56,8 @@ struct Config {
 pub struct Error {
     kind: ErrorKind,
     source: Option<Box<dyn StdError + Send + Sync>>,
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    connect_info: Option<Connected>,
 }
 
 #[derive(Debug)]
@@ -74,12 +76,14 @@ macro_rules! e {
         Error {
             kind: ErrorKind::$kind,
             source: None,
+            connect_info: None,
         }
     };
     ($kind:ident, $src:expr) => {
         Error {
             kind: ErrorKind::$kind,
             source: Some($src.into()),
+            connect_info: None,
         }
     };
 }
@@ -277,7 +281,9 @@ where
         if pooled.is_http1() {
             if req.version() == Version::HTTP_2 {
                 warn!("Connection is HTTP/1, but request requires HTTP/2");
-                return Err(TrySendError::Nope(e!(UserUnsupportedVersion)));
+                return Err(TrySendError::Nope(
+                    e!(UserUnsupportedVersion).with_connect_info(pooled.conn_info.clone()),
+                ));
             }
 
             if self.config.set_host {
@@ -311,11 +317,15 @@ where
             Err(mut err) => {
                 return if let Some(req) = err.take_message() {
                     Err(TrySendError::Retryable {
-                        error: e!(Canceled, err.into_error()),
+                        error: e!(Canceled, err.into_error())
+                            .with_connect_info(pooled.conn_info.clone()),
                         req,
                     })
                 } else {
-                    Err(TrySendError::Nope(e!(SendRequest, err.into_error())))
+                    Err(TrySendError::Nope(
+                        e!(SendRequest, err.into_error())
+                            .with_connect_info(pooled.conn_info.clone()),
+                    ))
                 }
             }
         };
@@ -789,6 +799,7 @@ impl<B: Body + 'static> PoolClient<B> {
             PoolTx::Http2(ref mut tx) => tx.try_send_request(req),
         };
     }
+
     /*
     //TODO: can we re-introduce this somehow? Or must people use tower::retry?
     fn send_request_retryable(
@@ -1602,6 +1613,19 @@ impl Error {
         matches!(self.kind, ErrorKind::Connect)
     }
 
+    /// Returns the info of the client connection on which this error occurred.
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    pub fn connect_info(&self) -> Option<&Connected> {
+        self.connect_info.as_ref()
+    }
+
+    #[cfg(any(feature = "http1", feature = "http2"))]
+    fn with_connect_info(self, connect_info: Connected) -> Self {
+        Self {
+            connect_info: Some(connect_info),
+            ..self
+        }
+    }
     fn is_canceled(&self) -> bool {
         matches!(self.kind, ErrorKind::Canceled)
     }
