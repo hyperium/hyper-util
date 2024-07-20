@@ -695,8 +695,8 @@ impl<E> Http1Builder<'_, E> {
     ///
     /// Pass `None` to disable.
     ///
-    /// Default is 30 seconds.
-    pub fn header_read_timeout(&mut self, read_timeout: Duration) -> &mut Self {
+    /// Default is currently 30 seconds, but do not depend on that.
+    pub fn header_read_timeout(&mut self, read_timeout: impl Into<Option<Duration>>) -> &mut Self {
         self.inner.http1.header_read_timeout(read_timeout);
         self
     }
