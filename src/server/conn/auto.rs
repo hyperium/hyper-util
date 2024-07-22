@@ -690,8 +690,13 @@ impl<E> Http1Builder<'_, E> {
     /// Set a timeout for reading client request headers. If a client does not
     /// transmit the entire header within this time, the connection is closed.
     ///
-    /// Default is None.
-    pub fn header_read_timeout(&mut self, read_timeout: Duration) -> &mut Self {
+    /// Requires a [`Timer`] set by [`Http1Builder::timer`] to take effect. Panics if `header_read_timeout` is configured
+    /// without a [`Timer`].
+    ///
+    /// Pass `None` to disable.
+    ///
+    /// Default is currently 30 seconds, but do not depend on that.
+    pub fn header_read_timeout(&mut self, read_timeout: impl Into<Option<Duration>>) -> &mut Self {
         self.inner.http1.header_read_timeout(read_timeout);
         self
     }
