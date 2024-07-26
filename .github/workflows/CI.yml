@@ -68,6 +68,10 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
+      - name: Make sure tokio 1.38.1 is used for MSRV
+        run: |
+          cargo update
+          cargo update --package tokio --precise 1.38.1
       - run: cargo check --features full
 
   miri:
