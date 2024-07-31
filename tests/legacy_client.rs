@@ -909,6 +909,7 @@ fn capture_connection_on_client() {
     assert!(captured_conn.connection_metadata().is_some());
 }
 
+#[cfg(not(miri))]
 #[test]
 fn connection_poisoning() {
     use std::sync::atomic::AtomicUsize;
