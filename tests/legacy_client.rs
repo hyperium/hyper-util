@@ -909,7 +909,6 @@ fn capture_connection_on_client() {
     assert!(captured_conn.connection_metadata().is_some());
 }
 
-#[cfg(not(miri))]
 #[test]
 fn connection_poisoning() {
     use std::sync::atomic::AtomicUsize;
@@ -938,9 +937,9 @@ fn connection_poisoning() {
             let mut buf = [0; 4096];
             loop {
                 if sock.read(&mut buf).expect("read 1") > 0 {
+                    num_requests_tracker.fetch_add(1, Ordering::Relaxed);
                     sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
                         .expect("write 1");
-                    num_requests_tracker.fetch_add(1, Ordering::Relaxed);
                 }
             }
         });
