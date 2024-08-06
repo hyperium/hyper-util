@@ -15,6 +15,7 @@ use futures_util::stream::StreamExt;
 use futures_util::{self, Stream};
 use http_body_util::BodyExt;
 use http_body_util::{Empty, Full, StreamBody};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use hyper::body::Bytes;
 use hyper::body::Frame;
@@ -89,33 +90,30 @@ fn drop_body_before_eof_closes_connection() {
 async fn drop_client_closes_idle_connections() {
     let _ = pretty_env_logger::try_init();
 
-    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = server.local_addr().unwrap();
     let (closes_tx, mut closes) = mpsc::channel(10);
 
     let (tx1, rx1) = oneshot::channel();
-    let (_client_drop_tx, client_drop_rx) = oneshot::channel::<()>();
 
-    thread::spawn(move || {
-        let mut sock = server.accept().unwrap().0;
-        sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        sock.set_write_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
+    let t1 = tokio::spawn(async move {
+        let mut sock = server.accept().await.unwrap().0;
         let mut buf = [0; 4096];
-        sock.read(&mut buf).expect("read 1");
+        sock.read(&mut buf).await.expect("read 1");
         let body = [b'x'; 64];
-        write!(
-            sock,
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-            body.len()
-        )
-        .expect("write head");
-        let _ = sock.write_all(&body);
+        let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+        sock.write_all(headers.as_bytes())
+            .await
+            .expect("write head");
+        sock.write_all(&body).await.expect("write body");
         let _ = tx1.send(());
 
         // prevent this thread from closing until end of test, so the connection
         // stays open and idle until Client is dropped
-        runtime().block_on(client_drop_rx.into_future())
+        match sock.read(&mut buf).await {
+            Ok(n) => assert_eq!(n, 0),
+            Err(_) => (),
+        }
     });
 
     let client = Client::builder(TokioExecutor::new()).build(DebugConnector::with_http_and_closes(
@@ -149,6 +147,7 @@ async fn drop_client_closes_idle_connections() {
     futures_util::pin_mut!(t);
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
+    t1.await.unwrap();
 }
 
 #[cfg(not(miri))]
