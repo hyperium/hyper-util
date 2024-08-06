@@ -3,7 +3,6 @@ use std::env;
 use http_body_util::Empty;
 use hyper::Request;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
-use tracing::{info_span, Instrument};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,8 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .uri(url)
         .body(Empty::<bytes::Bytes>::new())?;
 
-    let span = info_span!("request", uri = %req.uri());
-    let resp = client.request(req).instrument(span).await?;
+    let resp = client.request(req).await?;
 
     eprintln!("{:?} {:?}", resp.version(), resp.status());
     eprintln!("{:#?}", resp.headers());
