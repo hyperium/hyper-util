@@ -4,22 +4,9 @@ use http_body_util::Empty;
 use hyper::Request;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tracing::{info_span, Instrument};
-use tracing_subscriber::{
-    fmt::{self, format::FmtSpan},
-    prelude::*,
-    EnvFilter,
-};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let fmt_layer = fmt::layer()
-        .with_span_events(FmtSpan::CLOSE) // show time elapsed in spans
-        .with_timer(fmt::time::Uptime::default());
-    tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env())
-        .with(fmt_layer)
-        .init();
-
     let url = match env::args().nth(1) {
         Some(url) => url,
         None => {
