@@ -17,6 +17,7 @@ use pin_project_lite::pin_project;
 use tokio::sync::watch;
 
 /// A graceful shutdown utility
+#[derive(Clone)]
 pub struct GracefulShutdown {
     tx: watch::Sender<()>,
 }
