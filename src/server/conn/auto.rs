@@ -51,6 +51,36 @@ pub trait HttpServerConnExec<A, B: Body> {}
 #[cfg(not(feature = "http2"))]
 impl<A, B: Body, T> HttpServerConnExec<A, B> for T {}
 
+/// Connection graceful shutdown flags.
+pub struct GracefulShutdownFlags
+{
+    /// Http2 connection graceful shutdown flags.
+    #[cfg(feature = "http2")]
+    http2: http2::GracefulShutdownFlags,
+}
+
+impl Default for GracefulShutdownFlags {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "http2")]
+            http2: http2::GracefulShutdownFlags::None
+        }
+    }
+}
+
+impl GracefulShutdownFlags {
+    /// Create a new graceful shutdown flags structure.
+    pub fn new(
+        #[cfg(feature = "http2")]
+        http2_flags: http2::GracefulShutdownFlags
+        ) -> Self {
+        Self{
+            #[cfg(feature = "http2")]
+            http2: http2_flags
+        }
+    }
+}
+
 /// Http1 or Http2 connection builder.
 #[derive(Clone, Debug)]
 pub struct Builder<E> {
@@ -361,12 +391,25 @@ where
     /// This should only be called while the `Connection` future is still pending. If called after
     /// `Connection::poll` has resolved, this does nothing.
     pub fn graceful_shutdown(self: Pin<&mut Self>) {
+        self.graceful_shutdown_v2(GracefulShutdownFlags::default());
+    }
+
+    /// Start a graceful shutdown process for this connection.
+    ///
+    /// Supports GracefulShutdownFlags as input parameters.
+    /// This `Connection` should continue to be polled until shutdown can finish.
+    ///
+    /// # Note
+    ///
+    /// This should only be called while the `Connection` future is still pending. If called after
+    /// `Connection::poll` has resolved, this does nothing.
+    pub fn graceful_shutdown_v2(self: Pin<&mut Self>, flags: GracefulShutdownFlags) {
         match self.project().state.project() {
             ConnStateProj::ReadVersion { read_version, .. } => read_version.cancel(),
             #[cfg(feature = "http1")]
             ConnStateProj::H1 { conn } => conn.graceful_shutdown(),
             #[cfg(feature = "http2")]
-            ConnStateProj::H2 { conn } => conn.graceful_shutdown(),
+            ConnStateProj::H2 { conn } => conn.graceful_shutdown_v2(flags.http2),
             #[cfg(any(not(feature = "http1"), not(feature = "http2")))]
             _ => unreachable!(),
         }
