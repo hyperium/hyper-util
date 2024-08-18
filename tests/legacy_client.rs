@@ -20,7 +20,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use hyper::body::Bytes;
 use hyper::body::Frame;
 use hyper::Request;
-use hyper_util::client::legacy::connect::{capture_connection, HttpConnector};
+use hyper_util::client::legacy::connect::{capture_connection, HttpConnector, HttpInfo};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 
@@ -977,4 +977,92 @@ fn connection_poisoning() {
     // another request can still reuse:
     assert_eq!(num_conns.load(Ordering::SeqCst), 2);
     assert_eq!(num_requests.load(Ordering::SeqCst), 5);
+}
+
+#[cfg(not(miri))]
+#[tokio::test]
+async fn connect_info_on_error() {
+    let client = Client::builder(TokioExecutor::new()).build(HttpConnector::new());
+
+    // srv1 accepts one connection, and cancel it after reading the second request.
+    let tcp1 = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr1 = tcp1.local_addr().unwrap();
+    let srv1 = tokio::spawn(async move {
+        let (mut sock, _addr) = tcp1.accept().await.unwrap();
+        let mut buf = [0; 4096];
+        sock.read(&mut buf).await.expect("read 1");
+        let body = Bytes::from("Hello, world!");
+        sock.write_all(
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes(),
+        )
+        .await
+        .expect("write header");
+        sock.write_all(&body).await.expect("write body");
+
+        sock.read(&mut buf).await.expect("read 2");
+        drop(sock);
+    });
+
+    // Makes a first request to srv1, which should succeed.
+    {
+        let req = Request::builder()
+            .uri(format!("http://{addr1}"))
+            .body(Empty::<Bytes>::new())
+            .unwrap();
+        let res = client.request(req).await.unwrap();
+        let http_info = res.extensions().get::<HttpInfo>().unwrap();
+        assert_eq!(http_info.remote_addr(), addr1);
+        let res_body = String::from_utf8(res.collect().await.unwrap().to_bytes().into()).unwrap();
+        assert_eq!(res_body, "Hello, world!");
+    }
+
+    // Makes a second request to srv1, which should use the same connection and fail.
+    {
+        let req = Request::builder()
+            .uri(format!("http://{addr1}"))
+            .body(Empty::<Bytes>::new())
+            .unwrap();
+        let err = client.request(req).await.unwrap_err();
+        let conn_info = err.connect_info().unwrap();
+        assert!(!conn_info.is_proxied());
+        assert!(!conn_info.is_negotiated_h2());
+        assert!(conn_info.is_reused());
+
+        let mut exts = http::Extensions::new();
+        conn_info.get_extras(&mut exts);
+        let http_info = exts.get::<HttpInfo>().unwrap();
+        assert_eq!(http_info.remote_addr(), addr1);
+    }
+
+    srv1.await.unwrap();
+
+    // srv2 accepts one connection, reads a request, and immediately closes it.
+    let tcp2 = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr2 = tcp2.local_addr().unwrap();
+    let srv2 = tokio::spawn(async move {
+        let (mut sock, _addr) = tcp2.accept().await.unwrap();
+        let mut buf = [0; 4096];
+        sock.read(&mut buf).await.expect("read");
+        drop(sock);
+    });
+
+    // Makes a first request to srv2, which should use a fresh connection and fail.
+    {
+        let req = Request::builder()
+            .uri(format!("http://{addr2}"))
+            .body(Empty::<Bytes>::new())
+            .unwrap();
+        let err = client.request(req).await.unwrap_err();
+        let conn_info = err.connect_info().unwrap();
+        assert!(!conn_info.is_proxied());
+        assert!(!conn_info.is_negotiated_h2());
+        assert!(!conn_info.is_reused());
+
+        let mut exts = http::Extensions::new();
+        conn_info.get_extras(&mut exts);
+        let http_info = exts.get::<HttpInfo>().unwrap();
+        assert_eq!(http_info.remote_addr(), addr2);
+    }
+
+    srv2.await.unwrap();
 }
