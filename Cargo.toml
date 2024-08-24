@@ -13,6 +13,9 @@ categories = ["network-programming", "web-programming::http-client", "web-progra
 edition = "2021"
 rust-version = "1.63"
 
+[patch.crates-io]
+hyper = { git = "https://github.com/finnbear/hyper", branch = "idle_timeout" }
+
 [package.metadata.docs.rs]
 features = ["full"]
 rustdoc-args = ["--cfg", "docsrs"]
