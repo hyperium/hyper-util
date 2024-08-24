@@ -701,6 +701,21 @@ impl<E> Http1Builder<'_, E> {
         self
     }
 
+    /// Set a timeout for idle time between requests. If a client does not
+    /// transmit another request within this time after receiving the last
+    /// response, the connection is closed.
+    ///
+    /// Requires a [`Timer`] set by [`Builder::timer`] to take effect. Panics if `idle_timeout` is configured
+    /// without a [`Timer`].
+    ///
+    /// Pass `None` to disable.
+    ///
+    /// Default is currently 120 seconds, but do not depend on that.
+    pub fn idle_timeout(&mut self, idle_timeout: impl Into<Option<Duration>>) -> &mut Self {
+        self.inner.http1.idle_timeout(idle_timeout);
+        self
+    }
+
     /// Set whether HTTP/1 connections should try to use vectored writes,
     /// or always flatten into a single buffer.
     ///
