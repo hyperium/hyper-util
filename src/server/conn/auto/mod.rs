@@ -1,5 +1,7 @@
 //! Http1 or Http2 connection.
 
+pub mod upgrade;
+
 use futures_util::ready;
 use hyper::service::HttpService;
 use std::future::Future;
@@ -163,6 +165,10 @@ impl<E> Builder<E> {
     /// Bind a connection together with a [`Service`], with the ability to
     /// handle HTTP upgrades. This requires that the IO object implements
     /// `Send`.
+    ///
+    /// Note that if you ever want to use [`hyper::upgrade::Upgraded::downcast`]
+    /// with this crate, you'll need to use [`hyper_util::server::conn::auto::upgrade::downcast`]
+    /// instead. See the documentation of the latter to understand why.
     pub fn serve_connection_with_upgrades<I, S, B>(
         &self,
         io: I,
