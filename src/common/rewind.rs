@@ -11,8 +11,8 @@ use std::{
 /// Combine a buffer with an IO, rewinding reads to use the buffer.
 #[derive(Debug)]
 pub(crate) struct Rewind<T> {
-    pre: Option<Bytes>,
-    inner: T,
+    pub(crate) pre: Option<Bytes>,
+    pub(crate) inner: T,
 }
 
 impl<T> Rewind<T> {
