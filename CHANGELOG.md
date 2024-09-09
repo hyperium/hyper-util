@@ -1,3 +1,7 @@
+# 0.1.8 (2024-09-09)
+
+- Add `server::conn::auto::upgrade::downcast()` for use with auto connection upgrades.
+
 # 0.1.7 (2024-08-06)
 
 - Add `Connected::poison()` to `legacy` client, a port from hyper v0.14.x.
