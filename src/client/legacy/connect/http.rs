@@ -433,7 +433,12 @@ where
                 .map_err(ConnectError::dns)?;
             let addrs = addrs
                 .map(|mut addr| {
-                    addr.set_port(port);
+                    // Respect explicit ports in the URI,
+                    // and non `0` ports resolved from a custom dns resolver.
+                    if dst.port().is_some() || addr.port() == 0 {
+                        addr.set_port(port)
+                    };
+
                     addr
                 })
                 .collect();
