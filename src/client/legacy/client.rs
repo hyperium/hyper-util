@@ -57,7 +57,7 @@ pub struct Error {
     kind: ErrorKind,
     source: Option<Box<dyn StdError + Send + Sync>>,
     #[cfg(any(feature = "http1", feature = "http2"))]
-    connect_info: Option<Connected>,
+    connect_info: Option<ErroredConnectInfo>,
 }
 
 #[derive(Debug)]
@@ -69,6 +69,34 @@ enum ErrorKind {
     UserUnsupportedVersion,
     UserAbsoluteUriRequired,
     SendRequest,
+}
+
+/// Extra information about a failed connection.
+pub struct ErroredConnectInfo {
+    conn_info: Connected,
+    is_reused: bool,
+}
+
+impl ErroredConnectInfo {
+    /// Determines if the connected transport is to an HTTP proxy.
+    pub fn is_proxied(&self) -> bool {
+        self.conn_info.is_proxied()
+    }
+
+    /// Copies the extra connection information into an `Extensions` map.
+    pub fn get_extras(&self, extensions: &mut http::Extensions) {
+        self.conn_info.get_extras(extensions);
+    }
+
+    /// Determines if the connected transport negotiated HTTP/2 as its next protocol.
+    pub fn is_negotiated_h2(&self) -> bool {
+        self.conn_info.is_negotiated_h2()
+    }
+
+    /// Determines if the connection is a reused one from the connection pool.
+    pub fn is_reused(&self) -> bool {
+        self.is_reused
+    }
 }
 
 macro_rules! e {
@@ -282,7 +310,7 @@ where
             if req.version() == Version::HTTP_2 {
                 warn!("Connection is HTTP/1, but request requires HTTP/2");
                 return Err(TrySendError::Nope(
-                    e!(UserUnsupportedVersion).with_connect_info(pooled.conn_info.clone()),
+                    e!(UserUnsupportedVersion).with_connect_info(&pooled),
                 ));
             }
 
@@ -317,14 +345,12 @@ where
             Err(mut err) => {
                 return if let Some(req) = err.take_message() {
                     Err(TrySendError::Retryable {
-                        error: e!(Canceled, err.into_error())
-                            .with_connect_info(pooled.conn_info.clone()),
+                        error: e!(Canceled, err.into_error()).with_connect_info(&pooled),
                         req,
                     })
                 } else {
                     Err(TrySendError::Nope(
-                        e!(SendRequest, err.into_error())
-                            .with_connect_info(pooled.conn_info.clone()),
+                        e!(SendRequest, err.into_error()).with_connect_info(&pooled),
                     ))
                 }
             }
@@ -1619,14 +1645,20 @@ impl Error {
 
     /// Returns the info of the client connection on which this error occurred.
     #[cfg(any(feature = "http1", feature = "http2"))]
-    pub fn connect_info(&self) -> Option<&Connected> {
+    pub fn connect_info(&self) -> Option<&ErroredConnectInfo> {
         self.connect_info.as_ref()
     }
 
     #[cfg(any(feature = "http1", feature = "http2"))]
-    fn with_connect_info(self, connect_info: Connected) -> Self {
+    fn with_connect_info<B>(self, pooled: &pool::Pooled<PoolClient<B>, PoolKey>) -> Self
+    where
+        B: Send + 'static,
+    {
         Self {
-            connect_info: Some(connect_info),
+            connect_info: Some(ErroredConnectInfo {
+                conn_info: pooled.conn_info.clone(),
+                is_reused: pooled.is_reused(),
+            }),
             ..self
         }
     }
