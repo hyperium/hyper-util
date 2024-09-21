@@ -92,7 +92,11 @@ macro_rules! e {
 type PoolKey = (http::uri::Scheme, http::uri::Authority);
 
 enum TrySendError<B> {
-    Retryable { error: Error, req: Request<B> },
+    Retryable {
+        error: Error,
+        req: Request<B>,
+        connection_reused: bool,
+    },
     Nope(Error),
 }
 
@@ -244,8 +248,12 @@ where
             req = match self.try_send_request(req, pool_key.clone()).await {
                 Ok(resp) => return Ok(resp),
                 Err(TrySendError::Nope(err)) => return Err(err),
-                Err(TrySendError::Retryable { mut req, error }) => {
-                    if !self.config.retry_canceled_requests {
+                Err(TrySendError::Retryable {
+                    mut req,
+                    error,
+                    connection_reused,
+                }) => {
+                    if !self.config.retry_canceled_requests || !connection_reused {
                         // if client disabled, don't retry
                         // a fresh connection means we definitely can't retry
                         return Err(error);
@@ -317,6 +325,7 @@ where
             Err(mut err) => {
                 return if let Some(req) = err.take_message() {
                     Err(TrySendError::Retryable {
+                        connection_reused: pooled.is_reused(),
                         error: e!(Canceled, err.into_error())
                             .with_connect_info(pooled.conn_info.clone()),
                         req,
@@ -329,8 +338,6 @@ where
                 }
             }
         };
-        //.send_request_retryable(req)
-        //.map_err(ClientError::map_with_reused(pooled.is_reused()));
 
         // If the Connector included 'extra' info, add to Response...
         if let Some(extra) = &pooled.conn_info.extra {
@@ -803,26 +810,6 @@ impl<B: Body + 'static> PoolClient<B> {
             PoolTx::Http2(ref mut tx) => tx.try_send_request(req),
         };
     }
-
-    /*
-    //TODO: can we re-introduce this somehow? Or must people use tower::retry?
-    fn send_request_retryable(
-        &mut self,
-        req: Request<B>,
-    ) -> impl Future<Output = Result<Response<hyper::body::Incoming>, (Error, Option<Request<B>>)>>
-    where
-        B: Send,
-    {
-        match self.tx {
-            #[cfg(not(feature = "http2"))]
-            PoolTx::Http1(ref mut tx) => tx.send_request_retryable(req),
-            #[cfg(feature = "http1")]
-            PoolTx::Http1(ref mut tx) => Either::Left(tx.send_request_retryable(req)),
-            #[cfg(feature = "http2")]
-            PoolTx::Http2(ref mut tx) => Either::Right(tx.send_request_retryable(req)),
-        }
-    }
-    */
 }
 
 impl<B> pool::Poolable for PoolClient<B>
