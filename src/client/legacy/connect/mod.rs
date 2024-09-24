@@ -29,7 +29,7 @@
 //! use std::{future::Future, net::SocketAddr, pin::Pin, task::{self, Poll}};
 //! use http::Uri;
 //! use tokio::net::TcpStream;
-//! use tower::Service;
+//! use tower_service::Service;
 //!
 //! #[derive(Clone)]
 //! struct LocalConnector;
@@ -57,7 +57,7 @@
 //! better starting place to extend from.
 //!
 //! [`HttpConnector`]: HttpConnector
-//! [`Service`]: tower::Service
+//! [`Service`]: tower_service::Service
 //! [`Uri`]: ::http::Uri
 //! [`Read`]: hyper::rt::Read
 //! [`Write`]: hyper::rt::Write
@@ -343,8 +343,8 @@ pub(super) mod sealed {
     {
         type _Svc = S;
 
-        fn connect(self, _: Internal, dst: Uri) -> tower::util::Oneshot<S, Uri> {
-            tower::util::Oneshot::new(self, dst)
+        fn connect(self, _: Internal, dst: Uri) -> crate::service::Oneshot<S, Uri> {
+            crate::service::Oneshot::new(self, dst)
         }
     }
 
@@ -357,10 +357,10 @@ pub(super) mod sealed {
     {
         type Connection = T;
         type Error = S::Error;
-        type Future = tower::util::Oneshot<S, Uri>;
+        type Future = crate::service::Oneshot<S, Uri>;
 
         fn connect(self, _: Internal, dst: Uri) -> Self::Future {
-            tower::util::Oneshot::new(self, dst)
+            crate::service::Oneshot::new(self, dst)
         }
     }
 
