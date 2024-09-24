@@ -1,3 +1,9 @@
+# 0.1.9 (2024-09-24)
+
+- Add support for `client::legacy` DNS resolvers to set non-zero ports on returned addresses.
+- Fix `client::legacy` wrongly retrying pooled connections that were created successfully but failed immediately after, resulting in a retry loop.
+
+
 # 0.1.8 (2024-09-09)
 
 - Add `server::conn::auto::upgrade::downcast()` for use with auto connection upgrades.
