@@ -78,6 +78,8 @@ struct Config {
     recv_buffer_size: Option<usize>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     interface: Option<String>,
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    tcp_user_timeout: Option<Duration>,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -182,6 +184,8 @@ impl<R> HttpConnector<R> {
                 recv_buffer_size: None,
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 interface: None,
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                tcp_user_timeout: None,
             }),
             resolver,
         }
@@ -322,6 +326,13 @@ impl<R> HttpConnector<R> {
     pub fn set_interface<S: Into<String>>(&mut self, interface: S) -> &mut Self {
         self.config_mut().interface = Some(interface.into());
         self
+    }
+
+    /// Sets the value of the TCP_USER_TIMEOUT option on the socket.
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[inline]
+    pub fn set_tcp_user_timeout(&mut self, time: Option<Duration>) {
+        self.config_mut().tcp_user_timeout = time;
     }
 
     // private
@@ -726,6 +737,13 @@ fn connect(
         socket
             .bind_device(Some(interface.as_bytes()))
             .map_err(ConnectError::m("tcp bind interface error"))?;
+    }
+
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    if let Some(tcp_user_timeout) = &config.tcp_user_timeout {
+        if let Err(e) = socket.set_tcp_user_timeout(Some(*tcp_user_timeout)) {
+            warn!("tcp set_tcp_user_timeout error: {}", e);
+        }
     }
 
     bind_local_address(
@@ -1138,6 +1156,12 @@ mod tests {
                             target_os = "linux"
                         ))]
                         interface: None,
+                        #[cfg(any(
+                            target_os = "android",
+                            target_os = "fuchsia",
+                            target_os = "linux"
+                        ))]
+                        tcp_user_timeout: None,
                     };
                     let connecting_tcp = ConnectingTcp::new(dns::SocketAddrs::new(addrs), &cfg);
                     let start = Instant::now();
