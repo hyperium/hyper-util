@@ -31,7 +31,7 @@ use std::{fmt, io, vec};
 
 use tokio::task::JoinHandle;
 use tower_service::Service;
-use tracing::{debug, debug_span};
+use tracing::debug_span;
 
 pub(super) use self::sealed::Resolve;
 
@@ -118,10 +118,9 @@ impl Service<Name> for GaiResolver {
     }
 
     fn call(&mut self, name: Name) -> Self::Future {
-        let span = debug_span!("resolve", host = %name.host).or_current();
+        let span = debug_span!("resolve", host = %name.host);
         let blocking = tokio::task::spawn_blocking(move || {
             let _enter = span.enter();
-            debug!(host = name.host, "resolving");
             (&*name.host, 0)
                 .to_socket_addrs()
                 .map(|i| SocketAddrs { iter: i })
