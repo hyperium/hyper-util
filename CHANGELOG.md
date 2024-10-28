@@ -1,3 +1,8 @@
+# 0.1.10 (2024-10-28)
+
+- Add `http2_max_header_list_size(num)` option to legacy client builder.
+- Add `set_tcp_user_timeout(dur)` option to legacy `HttpConnector`.
+
 # 0.1.9 (2024-09-24)
 
 - Add support for `client::legacy` DNS resolvers to set non-zero ports on returned addresses.
