@@ -110,6 +110,8 @@ impl<E> Builder<E> {
     /// Only accepts HTTP/2
     ///
     /// Does not do anything if used with [`serve_connection_with_upgrades`]
+    ///
+    /// [`serve_connection_with_upgrades`]: Builder::serve_connection_with_upgrades
     #[cfg(feature = "http2")]
     pub fn http2_only(mut self) -> Self {
         assert!(self.version.is_none());
@@ -120,6 +122,8 @@ impl<E> Builder<E> {
     /// Only accepts HTTP/1
     ///
     /// Does not do anything if used with [`serve_connection_with_upgrades`]
+    ///
+    /// [`serve_connection_with_upgrades`]: Builder::serve_connection_with_upgrades
     #[cfg(feature = "http1")]
     pub fn http1_only(mut self) -> Self {
         assert!(self.version.is_none());
@@ -169,6 +173,8 @@ impl<E> Builder<E> {
     /// Note that if you ever want to use [`hyper::upgrade::Upgraded::downcast`]
     /// with this crate, you'll need to use [`hyper_util::server::conn::auto::upgrade::downcast`]
     /// instead. See the documentation of the latter to understand why.
+    ///
+    /// [`hyper_util::server::conn::auto::upgrade::downcast`]: crate::server::conn::auto::upgrade::downcast
     pub fn serve_connection_with_upgrades<I, S, B>(
         &self,
         io: I,
