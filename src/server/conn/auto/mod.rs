@@ -310,7 +310,7 @@ enum Cow<'a, T> {
     Owned(T),
 }
 
-impl<'a, T> std::ops::Deref for Cow<'a, T> {
+impl<T> std::ops::Deref for Cow<'_, T> {
     type Target = T;
     fn deref(&self) -> &T {
         match self {
