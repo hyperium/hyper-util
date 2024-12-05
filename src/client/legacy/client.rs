@@ -344,17 +344,6 @@ where
             extra.set(res.extensions_mut());
         }
 
-        // As of futures@0.1.21, there is a race condition in the mpsc
-        // channel, such that sending when the receiver is closing can
-        // result in the message being stuck inside the queue. It won't
-        // ever notify until the Sender side is dropped.
-        //
-        // To counteract this, we must check if our senders 'want' channel
-        // has been closed after having tried to send. If so, error out...
-        if pooled.is_closed() {
-            return Ok(res);
-        }
-
         // If pooled is HTTP/2, we can toss this reference immediately.
         //
         // when pooled is dropped, it will try to insert back into the
