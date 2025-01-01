@@ -629,6 +629,16 @@ impl<E> Http1Builder<'_, E> {
         Http2Builder { inner: self.inner }
     }
 
+    /// Set whether the `date` header should be included in HTTP responses.
+    ///
+    /// Note that including the `date` header is recommended by RFC 7231.
+    ///
+    /// Default is true.
+    pub fn auto_date_header(&mut self, enabled: bool) -> &mut Self {
+        self.inner.http1.auto_date_header(enabled);
+        self
+    }
+
     /// Set whether HTTP/1 connections should support half-closures.
     ///
     /// Clients can chose to shutdown their write-side while waiting
@@ -837,6 +847,19 @@ impl<E> Http2Builder<'_, E> {
         self
     }
 
+    /// Configures the maximum number of local reset streams allowed before a GOAWAY will be sent.
+    ///
+    /// If not set, hyper will use a default, currently of 1024.
+    ///
+    /// If `None` is supplied, hyper will not apply any limit.
+    /// This is not advised, as it can potentially expose servers to DOS vulnerabilities.
+    ///
+    /// See <https://rustsec.org/advisories/RUSTSEC-2024-0003.html> for more information.
+    pub fn max_local_error_reset_streams(mut self, max: impl Into<Option<usize>>) -> Self {
+        self.inner.http2.max_local_error_reset_streams(max);
+        self
+    }
+
     /// Sets the [`SETTINGS_INITIAL_WINDOW_SIZE`][spec] option for HTTP2
     /// stream-level flow control.
     ///
@@ -953,6 +976,16 @@ impl<E> Http2Builder<'_, E> {
         M: Timer + Send + Sync + 'static,
     {
         self.inner.http2.timer(timer);
+        self
+    }
+
+    /// Set whether the `date` header should be included in HTTP responses.
+    ///
+    /// Note that including the `date` header is recommended by RFC 7231.
+    ///
+    /// Default is true.
+    pub fn auto_date_header(&mut self, enabled: bool) -> &mut Self {
+        self.inner.http2.auto_date_header(enabled);
         self
     }
 
