@@ -41,6 +41,8 @@ pub trait Poolable: Unpin + Send + Sized + 'static {
     /// Allows for HTTP/2 to return a shared reservation.
     fn reserve(self) -> Reservation<Self>;
     fn can_share(&self) -> bool;
+    /// Mark the connection as reused.
+    fn mark_as_reused(&mut self);
 }
 
 pub trait Key: Eq + Hash + Clone + Debug + Unpin + Send + 'static {}
@@ -266,7 +268,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
         }
     }
 
-    fn reuse(&self, key: &K, value: T) -> Pooled<T, K> {
+    fn reuse(&self, key: &K, mut value: T) -> Pooled<T, K> {
         debug!("reuse idle connection for {:?}", key);
         // TODO: unhack this
         // In Pool::pooled(), which is used for inserting brand new connections,
@@ -282,6 +284,8 @@ impl<T: Poolable, K: Key> Pool<T, K> {
                 pool_ref = WeakOpt::downgrade(enabled);
             }
         }
+
+        value.mark_as_reused();
 
         Pooled {
             is_reused: true,
@@ -864,6 +868,8 @@ mod tests {
         fn can_share(&self) -> bool {
             false
         }
+
+        fn mark_as_reused(&mut self) {}
     }
 
     fn c<T: Poolable, K: Key>(key: K) -> Connecting<T, K> {
@@ -1074,6 +1080,8 @@ mod tests {
         fn can_share(&self) -> bool {
             false
         }
+
+        fn mark_as_reused(&mut self) {}
     }
 
     #[test]
