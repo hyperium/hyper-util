@@ -978,3 +978,73 @@ fn connection_poisoning() {
     assert_eq!(num_conns.load(Ordering::SeqCst), 2);
     assert_eq!(num_requests.load(Ordering::SeqCst), 5);
 }
+
+#[cfg(not(miri))]
+#[test]
+fn get_conn_reuse_info_via_connected() {
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = server.local_addr().unwrap();
+    let rt = runtime();
+    let (tx1, rx1) = oneshot::channel();
+    let (tx2, rx2) = oneshot::channel();
+    thread::spawn(move || {
+        let mut sock = server.accept().unwrap().0;
+        sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        sock.set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+
+        let mut buf = [0; 4096];
+        let mut n = sock.read(&mut buf).expect("read 1");
+        assert_ne!(n, 0);
+        let mut http_headline = "GET /first HTTP/1.1\r\n";
+        assert_eq!(s(&buf[..http_headline.len()]), http_headline);
+
+        let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+        sock.write_all(resp).expect("write 1");
+        let _ = tx1.send(());
+
+        n = sock.read(&mut buf).expect("read 2");
+        assert_ne!(n, 0);
+        http_headline = "GET /second HTTP/1.1\r\n";
+        assert_eq!(s(&buf[..http_headline.len()]), http_headline);
+
+        sock.write_all(resp).unwrap();
+        let _ = tx2.send(());
+
+        // The stream is dropped and server exits...
+    });
+
+    let connector = DebugConnector::new();
+    let connects = connector.connects.clone();
+    let client = Client::builder(TokioExecutor::new()).build(connector);
+    let mut req = Request::builder()
+        .uri(format!("http://{addr}/first"))
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let captured = capture_connection(&mut req);
+
+    let res = client.request(req);
+    rt.block_on(future::join(res, rx1).map(|r| r.0)).unwrap();
+
+    let connected = captured.connection_metadata();
+    // First request should establish a new connection.
+    assert_eq!(connects.load(Ordering::SeqCst), 1);
+    assert!(!connected.as_ref().is_some_and(|c| c.is_reused()));
+
+    // sleep real quick to let the threadpool put connection in ready
+    // state and back into client pool
+    thread::sleep(Duration::from_millis(50));
+
+    let mut req = Request::builder()
+        .uri(format!("http://{addr}/second"))
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let captured = capture_connection(&mut req);
+    let res = client.request(req);
+    rt.block_on(future::join(res, rx2).map(|r| r.0)).unwrap();
+
+    let connected = captured.connection_metadata();
+    // Second request should reuse the connection.
+    assert_eq!(connects.load(Ordering::SeqCst), 1);
+    assert!(connected.as_ref().is_some_and(|c| c.is_reused()));
+}
