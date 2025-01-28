@@ -807,7 +807,7 @@ fn client_upgrade() {
     assert_eq!(vec, b"bar=foo");
 }
 
-#[cfg(not(miri))]
+// #[cfg(not(miri))]
 #[test]
 fn client_http2_upgrade() {
     use http::{Method, Response, Version};
@@ -835,7 +835,7 @@ fn client_http2_upgrade() {
         let _ = builder
             .serve_connection_with_upgrades(
                 stream,
-                service_fn(|mut req| async move {
+                service_fn(|req| async move {
                     assert_eq!(req.headers().get("host"), None);
                     assert_eq!(req.version(), Version::HTTP_2);
                     assert_eq!(
@@ -847,9 +847,8 @@ fn client_http2_upgrade() {
                         Some(&hyper::ext::Protocol::from_static("websocket"))
                     );
 
-                    let on_upgrade = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>();
+                    let on_upgrade = hyper::upgrade::on(req);
                     tokio::spawn(async move {
-                        let on_upgrade = on_upgrade.unwrap();
                         let upgraded = on_upgrade.await.unwrap();
                         let mut io = TokioIo::new(upgraded);
 
@@ -869,8 +868,8 @@ fn client_http2_upgrade() {
     let req = Request::builder()
         .method(Method::CONNECT)
         .uri(&*format!("http://{}/up", addr))
-        .version(Version::HTTP_2)
         .header(http::header::SEC_WEBSOCKET_VERSION, "13")
+        .version(Version::HTTP_2)
         .extension(hyper::ext::Protocol::from_static("websocket"))
         .body(Empty::<Bytes>::new())
         .unwrap();
@@ -878,7 +877,7 @@ fn client_http2_upgrade() {
     let res = client.request(req);
     let res = rt.block_on(res).unwrap();
 
-    assert_eq!(res.status(), 200);
+    assert_eq!(res.status(), http::StatusCode::OK);
     assert_eq!(res.version(), Version::HTTP_2);
 
     let upgraded = rt.block_on(hyper::upgrade::on(res)).expect("on_upgrade");
