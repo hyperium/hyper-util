@@ -807,7 +807,7 @@ fn client_upgrade() {
     assert_eq!(vec, b"bar=foo");
 }
 
-// #[cfg(not(miri))]
+#[cfg(not(miri))]
 #[test]
 fn client_http2_upgrade() {
     use http::{Method, Response, Version};
