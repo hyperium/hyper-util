@@ -812,6 +812,7 @@ fn client_upgrade() {
 fn client_http2_upgrade() {
     use http::{Method, Response, Version};
     use hyper::service::service_fn;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     let _ = pretty_env_logger::try_init();
@@ -834,7 +835,7 @@ fn client_http2_upgrade() {
         let _ = builder
             .serve_connection_with_upgrades(
                 stream,
-                service_fn(|req| async move {
+                service_fn(|mut req| async move {
                     assert_eq!(req.headers().get("host"), None);
                     assert_eq!(req.version(), Version::HTTP_2);
                     assert_eq!(
@@ -845,7 +846,22 @@ fn client_http2_upgrade() {
                         req.extensions().get::<hyper::ext::Protocol>(),
                         Some(&hyper::ext::Protocol::from_static("websocket"))
                     );
-                    Ok::<_, hyper::Error>(Response::new(Empty::<Bytes>::default()))
+
+                    let on_upgrade = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>();
+                    tokio::spawn(async move {
+                        let on_upgrade = on_upgrade.unwrap();
+                        let upgraded = on_upgrade.await.unwrap();
+                        let mut io = TokioIo::new(upgraded);
+
+                        let mut vec = vec![];
+                        io.read_buf(&mut vec).await.unwrap();
+                        assert_eq!(vec, b"foo=bar");
+                        io.write_all(b"bar=foo").await.unwrap();
+                    });
+
+                    Ok::<_, hyper::Error>(Response::new(Full::<Bytes>::new(Bytes::from_static(
+                        b"foobar=ready",
+                    ))))
                 }),
             )
             .await
@@ -866,7 +882,14 @@ fn client_http2_upgrade() {
 
     assert_eq!(res.status(), 200);
     assert_eq!(res.version(), Version::HTTP_2);
-    let _ = rt.block_on(hyper::upgrade::on(res)).expect("on_upgrade");
+
+    let upgraded = rt.block_on(hyper::upgrade::on(res)).expect("on_upgrade");
+    let mut io = TokioIo::new(upgraded);
+
+    rt.block_on(io.write_all(b"foo=bar")).unwrap();
+    let mut vec = vec![];
+    rt.block_on(io.read_to_end(&mut vec)).unwrap();
+    assert_eq!(vec, b"bar=foo");
 }
 
 #[cfg(not(miri))]
