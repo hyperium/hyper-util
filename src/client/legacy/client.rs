@@ -316,7 +316,7 @@ where
             } else {
                 origin_form(req.uri_mut());
             }
-        } else if req.method() == Method::CONNECT {
+        } else if req.method() == Method::CONNECT && !pooled.is_http2() {
             authority_form(req.uri_mut());
         }
 
