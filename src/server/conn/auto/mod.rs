@@ -139,7 +139,7 @@ impl<E> Builder<E> {
             #[cfg(feature = "http2")]
             Some(Version::H2) => false,
             #[cfg(any(feature = "http1", feature = "http2"))]
-            _ => true
+            _ => true,
         }
     }
 
@@ -151,7 +151,7 @@ impl<E> Builder<E> {
             #[cfg(feature = "http2")]
             Some(Version::H2) => true,
             #[cfg(any(feature = "http1", feature = "http2"))]
-            _ => true
+            _ => true,
         }
     }
 
