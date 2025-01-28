@@ -131,6 +131,30 @@ impl<E> Builder<E> {
         self
     }
 
+    /// Returns `true` if this builder can serve an HTTP/1.1-based connection.
+    pub fn is_http1_available(&self) -> bool {
+        match self.version {
+            #[cfg(feature = "http1")]
+            Some(Version::H1) => true,
+            #[cfg(feature = "http2")]
+            Some(Version::H2) => false,
+            #[cfg(any(feature = "http1", feature = "http2"))]
+            _ => true,
+        }
+    }
+
+    /// Returns `true` if this builder can serve an HTTP/2-based connection.
+    pub fn is_http2_available(&self) -> bool {
+        match self.version {
+            #[cfg(feature = "http1")]
+            Some(Version::H1) => false,
+            #[cfg(feature = "http2")]
+            Some(Version::H2) => true,
+            #[cfg(any(feature = "http1", feature = "http2"))]
+            _ => true,
+        }
+    }
+
     /// Bind a connection together with a [`Service`].
     pub fn serve_connection<I, S, B>(&self, io: I, service: S) -> Connection<'_, I, S, E>
     where
