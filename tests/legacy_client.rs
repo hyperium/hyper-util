@@ -859,9 +859,7 @@ fn client_http2_upgrade() {
                         io.write_all(b"bar=foo").await.unwrap();
                     });
 
-                    Ok::<_, hyper::Error>(Response::new(Full::<Bytes>::new(Bytes::from_static(
-                        b"foobar=ready",
-                    ))))
+                    Ok::<_, hyper::Error>(Response::new(Empty::<Bytes>::new()))
                 }),
             )
             .await
