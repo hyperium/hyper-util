@@ -671,6 +671,18 @@ impl<E> Http1Builder<'_, E> {
         self
     }
 
+    /// Set whether HTTP/1 connections will silently ignored malformed header lines.
+    ///
+    /// If this is enabled and a header line does not start with a valid header
+    /// name, or does not include a colon at all, the line will be silently ignored
+    /// and no error will be reported.
+    ///
+    /// Default is false.
+    pub fn ignore_invalid_headers(&mut self, enabled: bool) -> &mut Self {
+        self.inner.http1.ignore_invalid_headers(enabled);
+        self
+    }
+
     /// Set whether to support preserving original header cases.
     ///
     /// Currently, this will record the original cases received, and store them
