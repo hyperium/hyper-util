@@ -54,14 +54,14 @@ struct Config {
 
 /// Client errors
 pub struct Error {
-    kind: ErrorKind,
+    pub kind: ErrorKind,
     source: Option<Box<dyn StdError + Send + Sync>>,
     #[cfg(any(feature = "http1", feature = "http2"))]
     connect_info: Option<Connected>,
 }
 
 #[derive(Debug)]
-enum ErrorKind {
+pub enum ErrorKind {
     Canceled,
     ChannelClosed,
     Connect,
