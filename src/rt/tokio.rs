@@ -9,6 +9,7 @@ use std::{
 
 use hyper::rt::{Executor, Sleep, Timer};
 use pin_project_lite::pin_project;
+use tracing::instrument::Instrument;
 
 /// Future executor that utilises `tokio` threads.
 #[non_exhaustive]
@@ -49,7 +50,7 @@ where
     Fut::Output: Send + 'static,
 {
     fn execute(&self, fut: Fut) {
-        tokio::spawn(fut);
+        tokio::spawn(fut.in_current_span());
     }
 }
 
