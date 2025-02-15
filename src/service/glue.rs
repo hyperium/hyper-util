@@ -1,12 +1,11 @@
-//! Service utilities.
-
 use pin_project_lite::pin_project;
 use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
-use tower::{util::Oneshot, ServiceExt};
+
+use super::Oneshot;
 
 /// A tower service converted into a hyper service.
 #[derive(Debug, Copy, Clone)]
@@ -33,7 +32,7 @@ where
 
     fn call(&self, req: R) -> Self::Future {
         TowerToHyperServiceFuture {
-            future: self.service.clone().oneshot(req),
+            future: Oneshot::new(self.service.clone(), req),
         }
     }
 }

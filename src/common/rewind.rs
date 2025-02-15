@@ -11,40 +11,18 @@ use std::{
 /// Combine a buffer with an IO, rewinding reads to use the buffer.
 #[derive(Debug)]
 pub(crate) struct Rewind<T> {
-    pre: Option<Bytes>,
-    inner: T,
+    pub(crate) pre: Option<Bytes>,
+    pub(crate) inner: T,
 }
 
 impl<T> Rewind<T> {
-    #[cfg(test)]
-    pub(crate) fn new(io: T) -> Self {
-        Rewind {
-            pre: None,
-            inner: io,
-        }
-    }
-
-    #[allow(dead_code)]
+    #[cfg(all(feature = "server", any(feature = "http1", feature = "http2")))]
     pub(crate) fn new_buffered(io: T, buf: Bytes) -> Self {
         Rewind {
             pre: Some(buf),
             inner: io,
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn rewind(&mut self, bs: Bytes) {
-        debug_assert!(self.pre.is_none());
-        self.pre = Some(bs);
-    }
-
-    // pub(crate) fn into_inner(self) -> (T, Bytes) {
-    //     (self.inner, self.pre.unwrap_or_else(Bytes::new))
-    // }
-
-    // pub(crate) fn get_mut(&mut self) -> &mut T {
-    //     &mut self.inner
-    // }
 }
 
 impl<T> Read for Rewind<T>

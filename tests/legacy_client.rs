@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::task::Poll;
 use std::thread;
 use std::time::Duration;
@@ -14,11 +15,12 @@ use futures_util::stream::StreamExt;
 use futures_util::{self, Stream};
 use http_body_util::BodyExt;
 use http_body_util::{Empty, Full, StreamBody};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use hyper::body::Bytes;
 use hyper::body::Frame;
 use hyper::Request;
-use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::connect::{capture_connection, HttpConnector};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 
@@ -88,33 +90,30 @@ fn drop_body_before_eof_closes_connection() {
 async fn drop_client_closes_idle_connections() {
     let _ = pretty_env_logger::try_init();
 
-    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = server.local_addr().unwrap();
     let (closes_tx, mut closes) = mpsc::channel(10);
 
     let (tx1, rx1) = oneshot::channel();
-    let (_client_drop_tx, client_drop_rx) = oneshot::channel::<()>();
 
-    thread::spawn(move || {
-        let mut sock = server.accept().unwrap().0;
-        sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        sock.set_write_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
+    let t1 = tokio::spawn(async move {
+        let mut sock = server.accept().await.unwrap().0;
         let mut buf = [0; 4096];
-        sock.read(&mut buf).expect("read 1");
+        sock.read(&mut buf).await.expect("read 1");
         let body = [b'x'; 64];
-        write!(
-            sock,
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-            body.len()
-        )
-        .expect("write head");
-        let _ = sock.write_all(&body);
+        let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+        sock.write_all(headers.as_bytes())
+            .await
+            .expect("write head");
+        sock.write_all(&body).await.expect("write body");
         let _ = tx1.send(());
 
         // prevent this thread from closing until end of test, so the connection
         // stays open and idle until Client is dropped
-        runtime().block_on(client_drop_rx.into_future())
+        match sock.read(&mut buf).await {
+            Ok(n) => assert_eq!(n, 0),
+            Err(_) => (),
+        }
     });
 
     let client = Client::builder(TokioExecutor::new()).build(DebugConnector::with_http_and_closes(
@@ -148,6 +147,7 @@ async fn drop_client_closes_idle_connections() {
     futures_util::pin_mut!(t);
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
+    t1.await.unwrap();
 }
 
 #[cfg(not(miri))]
@@ -809,6 +809,88 @@ fn client_upgrade() {
 
 #[cfg(not(miri))]
 #[test]
+fn client_http2_upgrade() {
+    use http::{Method, Response, Version};
+    use hyper::service::service_fn;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let _ = pretty_env_logger::try_init();
+    let rt = runtime();
+    let server = rt
+        .block_on(TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))))
+        .unwrap();
+    let addr = server.local_addr().unwrap();
+    let mut connector = DebugConnector::new();
+    connector.alpn_h2 = true;
+
+    let client = Client::builder(TokioExecutor::new()).build(connector);
+
+    rt.spawn(async move {
+        let (stream, _) = server.accept().await.expect("accept");
+        let stream = TokioIo::new(stream);
+        let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+        // IMPORTANT: This is required to advertise our support for HTTP/2 websockets to the client.
+        builder.http2().enable_connect_protocol();
+        let _ = builder
+            .serve_connection_with_upgrades(
+                stream,
+                service_fn(|req| async move {
+                    assert_eq!(req.headers().get("host"), None);
+                    assert_eq!(req.version(), Version::HTTP_2);
+                    assert_eq!(
+                        req.headers().get(http::header::SEC_WEBSOCKET_VERSION),
+                        Some(&http::header::HeaderValue::from_static("13"))
+                    );
+                    assert_eq!(
+                        req.extensions().get::<hyper::ext::Protocol>(),
+                        Some(&hyper::ext::Protocol::from_static("websocket"))
+                    );
+
+                    let on_upgrade = hyper::upgrade::on(req);
+                    tokio::spawn(async move {
+                        let upgraded = on_upgrade.await.unwrap();
+                        let mut io = TokioIo::new(upgraded);
+
+                        let mut vec = vec![];
+                        io.read_buf(&mut vec).await.unwrap();
+                        assert_eq!(vec, b"foo=bar");
+                        io.write_all(b"bar=foo").await.unwrap();
+                    });
+
+                    Ok::<_, hyper::Error>(Response::new(Empty::<Bytes>::new()))
+                }),
+            )
+            .await
+            .expect("server");
+    });
+
+    let req = Request::builder()
+        .method(Method::CONNECT)
+        .uri(&*format!("http://{}/up", addr))
+        .header(http::header::SEC_WEBSOCKET_VERSION, "13")
+        .version(Version::HTTP_2)
+        .extension(hyper::ext::Protocol::from_static("websocket"))
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+
+    let res = client.request(req);
+    let res = rt.block_on(res).unwrap();
+
+    assert_eq!(res.status(), http::StatusCode::OK);
+    assert_eq!(res.version(), Version::HTTP_2);
+
+    let upgraded = rt.block_on(hyper::upgrade::on(res)).expect("on_upgrade");
+    let mut io = TokioIo::new(upgraded);
+
+    rt.block_on(io.write_all(b"foo=bar")).unwrap();
+    let mut vec = vec![];
+    rt.block_on(io.read_to_end(&mut vec)).unwrap();
+    assert_eq!(vec, b"bar=foo");
+}
+
+#[cfg(not(miri))]
+#[test]
 fn alpn_h2() {
     use http::Response;
     use hyper::service::service_fn;
@@ -875,4 +957,106 @@ fn alpn_h2() {
         "after ALPN, no more connects"
     );
     drop(client);
+}
+
+#[cfg(not(miri))]
+#[test]
+fn capture_connection_on_client() {
+    let _ = pretty_env_logger::try_init();
+
+    let rt = runtime();
+    let connector = DebugConnector::new();
+
+    let client = Client::builder(TokioExecutor::new()).build(connector);
+
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = server.local_addr().unwrap();
+    thread::spawn(move || {
+        let mut sock = server.accept().unwrap().0;
+        sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        sock.set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut buf = [0; 4096];
+        sock.read(&mut buf).expect("read 1");
+        sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .expect("write 1");
+    });
+    let mut req = Request::builder()
+        .uri(&*format!("http://{}/a", addr))
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let captured_conn = capture_connection(&mut req);
+    rt.block_on(client.request(req)).expect("200 OK");
+    assert!(captured_conn.connection_metadata().is_some());
+}
+
+#[cfg(not(miri))]
+#[test]
+fn connection_poisoning() {
+    use std::sync::atomic::AtomicUsize;
+
+    let _ = pretty_env_logger::try_init();
+
+    let rt = runtime();
+    let connector = DebugConnector::new();
+
+    let client = Client::builder(TokioExecutor::new()).build(connector);
+
+    let server = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = server.local_addr().unwrap();
+    let num_conns: Arc<AtomicUsize> = Default::default();
+    let num_requests: Arc<AtomicUsize> = Default::default();
+    let num_requests_tracker = num_requests.clone();
+    let num_conns_tracker = num_conns.clone();
+    thread::spawn(move || loop {
+        let mut sock = server.accept().unwrap().0;
+        num_conns_tracker.fetch_add(1, Ordering::Relaxed);
+        let num_requests_tracker = num_requests_tracker.clone();
+        thread::spawn(move || {
+            sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            sock.set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut buf = [0; 4096];
+            loop {
+                if sock.read(&mut buf).expect("read 1") > 0 {
+                    num_requests_tracker.fetch_add(1, Ordering::Relaxed);
+                    sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                        .expect("write 1");
+                }
+            }
+        });
+    });
+    let make_request = || {
+        Request::builder()
+            .uri(&*format!("http://{}/a", addr))
+            .body(Empty::<Bytes>::new())
+            .unwrap()
+    };
+    let mut req = make_request();
+    let captured_conn = capture_connection(&mut req);
+    rt.block_on(client.request(req)).expect("200 OK");
+    assert_eq!(num_conns.load(Ordering::SeqCst), 1);
+    assert_eq!(num_requests.load(Ordering::SeqCst), 1);
+
+    rt.block_on(client.request(make_request())).expect("200 OK");
+    rt.block_on(client.request(make_request())).expect("200 OK");
+    // Before poisoning the connection is reused
+    assert_eq!(num_conns.load(Ordering::SeqCst), 1);
+    assert_eq!(num_requests.load(Ordering::SeqCst), 3);
+    captured_conn
+        .connection_metadata()
+        .as_ref()
+        .unwrap()
+        .poison();
+
+    rt.block_on(client.request(make_request())).expect("200 OK");
+
+    // After poisoning, a new connection is established
+    assert_eq!(num_conns.load(Ordering::SeqCst), 2);
+    assert_eq!(num_requests.load(Ordering::SeqCst), 4);
+
+    rt.block_on(client.request(make_request())).expect("200 OK");
+    // another request can still reuse:
+    assert_eq!(num_conns.load(Ordering::SeqCst), 2);
+    assert_eq!(num_requests.load(Ordering::SeqCst), 5);
 }
