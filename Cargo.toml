@@ -55,6 +55,7 @@ full = [
     "http1",
     "http2",
     "tokio",
+    "tracing",
 ]
 
 client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
@@ -69,7 +70,9 @@ service = ["dep:tower-service"]
 http1 = ["hyper/http1"]
 http2 = ["hyper/http2"]
 
-tokio = ["dep:tokio", "tokio/net", "tokio/rt", "tokio/time", "dep:tracing"]
+tokio = ["dep:tokio", "tokio/net", "tokio/rt", "tokio/time"]
+
+tracing = ["dep:tracing"]
 
 # internal features used in CI
 __internal_happy_eyeballs_tests = []
