@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Tokio IO integration for hyper
 use std::{
     future::Future,
