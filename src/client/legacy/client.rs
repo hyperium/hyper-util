@@ -758,15 +758,6 @@ impl<B> PoolClient<B> {
             PoolTx::Http2(ref tx) => tx.is_ready(),
         }
     }
-
-    fn is_closed(&self) -> bool {
-        match self.tx {
-            #[cfg(feature = "http1")]
-            PoolTx::Http1(ref tx) => tx.is_closed(),
-            #[cfg(feature = "http2")]
-            PoolTx::Http2(ref tx) => tx.is_closed(),
-        }
-    }
 }
 
 impl<B: Body + 'static> PoolClient<B> {
