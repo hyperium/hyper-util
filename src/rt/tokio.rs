@@ -12,6 +12,11 @@ use pin_project_lite::pin_project;
 #[cfg(feature = "tracing")]
 use tracing::instrument::Instrument;
 
+pub use self::{with_hyper_io::WithHyperIo, with_tokio_io::WithTokioIo};
+
+mod with_hyper_io;
+mod with_tokio_io;
+
 /// Future executor that utilises `tokio` threads.
 #[non_exhaustive]
 #[derive(Default, Debug, Clone)]
