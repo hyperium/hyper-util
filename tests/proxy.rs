@@ -2,7 +2,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tower_service::Service;
 
-use hyper_util::client::legacy::connect::{proxy::{Socks, Tunnel}, HttpConnector};
+use hyper_util::client::legacy::connect::{
+    proxy::{Socks, Tunnel},
+    HttpConnector,
+};
 
 #[cfg(not(miri))]
 #[tokio::test]
@@ -276,4 +279,3 @@ async fn test_socks_with_domain_works() {
     t1.await.expect("task - client");
     t2.await.expect("task - proxy");
 }
-

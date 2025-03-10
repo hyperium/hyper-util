@@ -1,7 +1,7 @@
 //! Proxy helpers
 
-mod tunnel;
 mod socks;
+mod tunnel;
 
-pub use self::tunnel::Tunnel;
 pub use self::socks::Socks;
+pub use self::tunnel::Tunnel;
