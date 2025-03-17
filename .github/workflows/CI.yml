@@ -60,7 +60,7 @@ jobs:
     needs: [style]
     strategy:
       matrix:
-        rust: [ 1.63 ] # keep in sync with 'rust-version' in Cargo.toml
+        rust: [ 1.65 ] # keep in sync with 'rust-version' in Cargo.toml
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
