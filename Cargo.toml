@@ -88,3 +88,8 @@ required-features = ["server", "http1", "tokio"]
 [[example]]
 name = "server_graceful"
 required-features = ["tokio", "server-graceful", "server-auto"]
+
+[patch.crates-io]
+# TODO: remove this patch once https://github.com/rust-lang/socket2/pull/566 is
+# published
+socket2 = { git = "https://github.com/rust-lang/socket2", rev = "d95e91462935a5252708a9df0babf29ad31c66f3" }
