@@ -875,8 +875,8 @@ fn connect(
             // Different setsockopt calls are necessary depending on whether the
             // address is IPv4 or IPv6.
             match addr {
-                SocketAddr::V4(_) => socket.bind_device_by_index_v4(idx),
-                SocketAddr::V6(_) => socket.bind_device_by_index_v6(idx),
+                SocketAddr::V4(_) => socket.bind_device_by_index_v4(Some(idx)),
+                SocketAddr::V6(_) => socket.bind_device_by_index_v6(Some(idx)),
             }
             .map_err(ConnectError::m("tcp bind interface error"))?;
         }
@@ -1297,6 +1297,16 @@ mod tests {
                             target_os = "android",
                             target_os = "fuchsia",
                             target_os = "linux"
+                        ))]
+                        interface: None,
+                        #[cfg(any(
+                            target_os = "illumos",
+                            target_os = "ios",
+                            target_os = "macos",
+                            target_os = "solaris",
+                            target_os = "tvos",
+                            target_os = "visionos",
+                            target_os = "watchos",
                         ))]
                         interface: None,
                         #[cfg(any(
