@@ -865,7 +865,7 @@ fn connect(
         ))]
         {
             let idx = unsafe { libc::if_nametoindex(interface.as_ptr()) };
-            let idx = std::num::NonZeroU32::from(idx).ok_or_else(|| {
+            let idx = std::num::NonZeroU32::new(idx).ok_or_else(|| {
                 // If the index is 0, check errno and return an I/O error.
                 ConnectError::new(
                     "error converting interface name to index",
@@ -878,7 +878,7 @@ fn connect(
                 SocketAddr::V4(_) => socket.bind_device_by_index_v4(idx),
                 SocketAddr::V6(_) => socket.bind_device_by_index_v6(idx),
             }
-            .map_err("tcp bind interface error")?;
+            .map_err(ConnectError::m("tcp bind interface error"))?;
         }
     }
 
