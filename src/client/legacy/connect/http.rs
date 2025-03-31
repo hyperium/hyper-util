@@ -522,6 +522,20 @@ impl Connection for TcpStream {
     }
 }
 
+#[cfg(unix)]
+impl Connection for tokio::net::UnixStream {
+    fn connected(&self) -> Connected {
+        Connected::new()
+    }
+}
+
+#[cfg(windows)]
+impl Connection for tokio::net::windows::named_pipe::NamedPipeClient {
+    fn connected(&self) -> Connected {
+        Connected::new()
+    }
+}
+
 // Implement `Connection` for generic `TokioIo<T>` so that external crates can
 // implement their own `HttpConnector` with `TokioIo<CustomTcpStream>`.
 impl<T> Connection for TokioIo<T>
