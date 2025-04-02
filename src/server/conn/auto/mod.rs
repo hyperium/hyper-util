@@ -156,6 +156,7 @@ impl<E> Builder<E> {
     }
 
     /// Bind a connection together with a [`Service`].
+    #[must_use]
     pub fn serve_connection<I, S, B>(&self, io: I, service: S) -> Connection<'_, I, S, E>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
@@ -199,6 +200,7 @@ impl<E> Builder<E> {
     /// instead. See the documentation of the latter to understand why.
     ///
     /// [`hyper_util::server::conn::auto::upgrade::downcast`]: crate::server::conn::auto::upgrade::downcast
+    #[must_use]
     pub fn serve_connection_with_upgrades<I, S, B>(
         &self,
         io: I,
