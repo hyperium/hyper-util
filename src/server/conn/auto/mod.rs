@@ -495,7 +495,8 @@ where
 }
 
 pin_project! {
-    /// An future binding a connection with a Service with Upgrade support.
+    /// An upgradable [`Connection`], returned by
+    /// [`Builder::serve_upgradable_connection`](struct.Builder.html#method.serve_connection_with_upgrades).
     ///
     /// To drive HTTP on this connection this future **must be polled**, typically with
     /// `.await`. If it isn't polled, no progress will be made on this connection.
