@@ -318,7 +318,12 @@ where
 }
 
 pin_project! {
-    /// Connection future.
+    /// A [`Future`](core::future::Future) representing an HTTP/1 connection, returned from
+    /// [`Builder::serve_connection`](struct.Builder.html#method.serve_connection).
+    ///
+    /// To drive HTTP on this connection this future **must be polled**, typically with
+    /// `.await`. If it isn't polled, no progress will be made on this connection.
+    #[must_use = "futures do nothing unless polled"]
     pub struct Connection<'a, I, S, E>
     where
         S: HttpService<Incoming>,
@@ -490,7 +495,12 @@ where
 }
 
 pin_project! {
-    /// Connection future.
+    /// An upgradable [`Connection`], returned by
+    /// [`Builder::serve_upgradable_connection`](struct.Builder.html#method.serve_connection_with_upgrades).
+    ///
+    /// To drive HTTP on this connection this future **must be polled**, typically with
+    /// `.await`. If it isn't polled, no progress will be made on this connection.
+    #[must_use = "futures do nothing unless polled"]
     pub struct UpgradeableConnection<'a, I, S, E>
     where
         S: HttpService<Incoming>,
