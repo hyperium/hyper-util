@@ -66,6 +66,12 @@ pub struct Builder<E> {
     _executor: E,
 }
 
+impl<E: Default> Default for Builder<E> {
+    fn default() -> Self {
+        Self::new(E::default())
+    }
+}
+
 impl<E> Builder<E> {
     /// Create a new auto connection builder.
     ///
