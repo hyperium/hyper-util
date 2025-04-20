@@ -122,9 +122,10 @@ impl Client<(), ()> {
     /// # fn run () {
     /// use std::time::Duration;
     /// use hyper_util::client::legacy::Client;
-    /// use hyper_util::rt::TokioExecutor;
+    /// use hyper_util::rt::{TokioExecutor, TokioTimer};
     ///
     /// let client = Client::builder(TokioExecutor::new())
+    ///     .pool_timer(TokioTimer::new())
     ///     .pool_idle_timeout(Duration::from_secs(30))
     ///     .http2_only(true)
     ///     .build_http();
