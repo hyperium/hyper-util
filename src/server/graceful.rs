@@ -68,6 +68,11 @@ impl GracefulShutdown {
         // and then wait for all of them to complete
         tx.closed().await;
     }
+
+    /// Returns the number of the watching connections.
+    pub fn count(&self) -> usize {
+        self.tx.receiver_count()
+    }
 }
 
 impl Debug for GracefulShutdown {
