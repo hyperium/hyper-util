@@ -329,3 +329,19 @@ impl TryFrom<u8> for AuthMethod {
         })
     }
 }
+
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Success => "success",
+            Self::GeneralServerFailure => "general server failure",
+            Self::ConnectionNotAllowed => "connection not allowed",
+            Self::NetworkUnreachable => "network unreachable",
+            Self::HostUnreachable => "host unreachable",
+            Self::ConnectionRefused => "connection refused",
+            Self::TtlExpired => "ttl expired",
+            Self::CommandNotSupported => "command not supported",
+            Self::AddressTypeNotSupported => "address type not supported",
+        })
+    }
+}
