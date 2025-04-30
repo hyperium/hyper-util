@@ -22,13 +22,13 @@ features = ["full"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
+hyper = "1.6.0"
 base64 = { version = "0.22", optional = true }
 bytes = "1.7.1"
 futures-channel = { version = "0.3", optional = true }
 futures-util = { version = "0.3.16", default-features = false }
 http = "1.0"
 http-body = "1.0.0"
-hyper = "1.4.0"
 ipnet = { version = "2.9", optional = true }
 percent-encoding = { version = "2.3", optional = true }
 pin-project-lite = "0.2.4"
@@ -71,6 +71,7 @@ full = [
     "http1",
     "http2",
     "tokio",
+    "tracing",
     "system-proxies"
 ]
 
@@ -93,6 +94,8 @@ http1 = ["hyper/http1"]
 http2 = ["hyper/http2"]
 
 tokio = ["dep:tokio", "tokio/net", "tokio/rt", "tokio/time"]
+
+tracing = ["dep:tracing"]
 
 system-proxies = ["system-configuration", "winreg"]
 

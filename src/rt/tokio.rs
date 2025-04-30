@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Tokio IO integration for hyper
 use std::{
     future::Future,
@@ -9,6 +8,9 @@ use std::{
 
 use hyper::rt::{Executor, Sleep, Timer};
 use pin_project_lite::pin_project;
+
+#[cfg(feature = "tracing")]
+use tracing::instrument::Instrument;
 
 /// Future executor that utilises `tokio` threads.
 #[non_exhaustive]
@@ -49,6 +51,10 @@ where
     Fut::Output: Send + 'static,
 {
     fn execute(&self, fut: Fut) {
+        #[cfg(feature = "tracing")]
+        tokio::spawn(fut.in_current_span());
+
+        #[cfg(not(feature = "tracing"))]
         tokio::spawn(fut);
     }
 }

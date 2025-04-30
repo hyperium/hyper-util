@@ -316,7 +316,7 @@ where
             } else {
                 origin_form(req.uri_mut());
             }
-        } else if req.method() == Method::CONNECT {
+        } else if req.method() == Method::CONNECT && !pooled.is_http2() {
             authority_form(req.uri_mut());
         }
 
@@ -756,15 +756,6 @@ impl<B> PoolClient<B> {
             PoolTx::Http1(ref tx) => tx.is_ready(),
             #[cfg(feature = "http2")]
             PoolTx::Http2(ref tx) => tx.is_ready(),
-        }
-    }
-
-    fn is_closed(&self) -> bool {
-        match self.tx {
-            #[cfg(feature = "http1")]
-            PoolTx::Http1(ref tx) => tx.is_closed(),
-            #[cfg(feature = "http2")]
-            PoolTx::Http2(ref tx) => tx.is_closed(),
         }
     }
 }
