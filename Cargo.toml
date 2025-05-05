@@ -26,13 +26,13 @@ http = "1.0"
 http-body = "1.0.0"
 hyper = "1.6.0"
 ipnet = { version = "2.9", optional = true }
+libc = { version = "0.2", optional = true }
 percent-encoding = { version = "2.3", optional = true }
 pin-project-lite = "0.2.4"
 socket2 = { version = "0.5.9", optional = true, features = ["all"] }
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 tokio = { version = "1", optional = true, default-features = false  }
 tower-service = { version = "0.3", optional = true }
-libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 hyper = { version = "1.4.0", features = ["full"] }
@@ -44,6 +44,9 @@ pretty_env_logger = "0.5"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
 pnet_datalink = "0.35.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+system-configuration = { version = "0.6.1", optional = true }
 
 [features]
 default = []
@@ -65,6 +68,7 @@ full = [
 client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
 client-legacy = ["client", "dep:socket2", "tokio/sync", "dep:libc"]
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
+client-proxy-system = ["dep:system-configuration"]
 
 server = ["hyper/server"]
 server-auto = ["server", "http1", "http2"]
