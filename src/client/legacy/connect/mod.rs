@@ -103,6 +103,7 @@ pub struct Connected {
     pub(super) is_proxied: bool,
     pub(super) extra: Option<Extra>,
     pub(super) poisoned: PoisonPill,
+    pub(super) is_reused: bool,
 }
 
 #[derive(Clone)]
@@ -153,6 +154,7 @@ impl Connected {
             is_proxied: false,
             extra: None,
             poisoned: PoisonPill::healthy(),
+            is_reused: false,
         }
     }
 
@@ -222,6 +224,16 @@ impl Connected {
         );
     }
 
+    /// Determines if the connection is reused.
+    pub fn is_reused(&self) -> bool {
+        self.is_reused
+    }
+
+    /// Mark the connection as reused.
+    pub fn reuse(&mut self) {
+        self.is_reused = true;
+    }
+
     // Don't public expose that `Connected` is `Clone`, unsure if we want to
     // keep that contract...
     pub(super) fn clone(&self) -> Connected {
@@ -230,6 +242,7 @@ impl Connected {
             is_proxied: self.is_proxied,
             extra: self.extra.clone(),
             poisoned: self.poisoned.clone(),
+            is_reused: self.is_reused,
         }
     }
 }
