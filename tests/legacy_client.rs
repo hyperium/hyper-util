@@ -1061,7 +1061,6 @@ fn connection_poisoning() {
     assert_eq!(num_requests.load(Ordering::SeqCst), 5);
 }
 
-
 // -------------------------------------------------------
 // Below is our custom code for testing hyper legacy-client behavior with mock connections for PR #184
 // We use fully qualified paths for all types and identifiers to make this code
@@ -1147,7 +1146,10 @@ impl hyper::rt::Read for MockConnection {
         buf: hyper::rt::ReadBufCursor<'_>,
     ) -> std::task::Poll<std::result::Result<(), std::io::Error>> {
         // Log the current state of the failed flag for debugging.
-        eprintln!("poll_read: failed={}", self.failed.load(std::sync::atomic::Ordering::SeqCst));
+        eprintln!(
+            "poll_read: failed={}",
+            self.failed.load(std::sync::atomic::Ordering::SeqCst)
+        );
         // Check if the connection is marked as failed.
         // If true, return the stored error immediately to simulate a connection failure.
         if self.failed.load(std::sync::atomic::Ordering::SeqCst) {
@@ -1188,7 +1190,10 @@ impl hyper::rt::Write for MockConnection {
                 // Increment the total bytes written for tracking.
                 self.bytes_written += bytes;
                 // Log the number of bytes written and the running total.
-                eprintln!("poll_write: wrote {} bytes, total={}", bytes, self.bytes_written);
+                eprintln!(
+                    "poll_write: wrote {} bytes, total={}",
+                    bytes, self.bytes_written
+                );
                 // If error_tx is present, signal an unexpected write (used in error tests).
                 // This helps detect writes when the connection should fail early.
                 if let Some(tx) = self.error_tx.take() {
@@ -1272,9 +1277,8 @@ impl tower_service::Service<hyper::Uri> for MockConnector {
     type Error = std::io::Error;
     type Future = std::pin::Pin<
         Box<
-            dyn futures_util::Future<
-                    Output = std::result::Result<Self::Response, Self::Error>,
-                > + Send,
+            dyn futures_util::Future<Output = std::result::Result<Self::Response, Self::Error>>
+                + Send,
         >,
     >;
 
@@ -1362,11 +1366,9 @@ async fn test_connection_error_propagation_pr184() {
     let connector = crate::MockConnector::new(io_builder, Some(io_error.clone()));
     // Build the hyper client with TokioExecutor and our connector.
     // pool_max_idle_per_host(0) disables connection pooling for a fresh connection.
-    let client = hyper_util::client::legacy::Client::builder(
-        hyper_util::rt::TokioExecutor::new()
-    )
-    .pool_max_idle_per_host(0)
-    .build::<_, http_body_util::Empty<hyper::body::Bytes>>(connector);
+    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .pool_max_idle_per_host(0)
+        .build::<_, http_body_util::Empty<hyper::body::Bytes>>(connector);
     // Build a GET request to a mock URI with custom headers.
     // Uses mixed-case headers to match your style, ensuring case-insensitive handling.
     let request = hyper::Request::builder()
@@ -1417,11 +1419,9 @@ async fn test_incomplete_message_error_pr184() {
     let connector = crate::MockConnector::new(io_builder, None);
     // Build the hyper client with TokioExecutor and our connector.
     // pool_max_idle_per_host(0) disables pooling for a fresh connection.
-    let client = hyper_util::client::legacy::Client::builder(
-        hyper_util::rt::TokioExecutor::new()
-    )
-    .pool_max_idle_per_host(0)
-    .build::<_, http_body_util::Empty<hyper::body::Bytes>>(connector);
+    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .pool_max_idle_per_host(0)
+        .build::<_, http_body_util::Empty<hyper::body::Bytes>>(connector);
     // Build a GET request to a mock URI with headers.
     // Uses mixed-case headers to match test_connection_error_propagation_pr184.
     // Empty body ensures focus on response parsing failure.
@@ -1487,11 +1487,9 @@ async fn test_successful_connection() {
     let connector = crate::MockConnector::new(io_builder, None);
     // Build the hyper client with TokioExecutor and our connector.
     // pool_max_idle_per_host(0) ensures a fresh connection.
-    let client = hyper_util::client::legacy::Client::builder(
-        hyper_util::rt::TokioExecutor::new()
-    )
-    .pool_max_idle_per_host(0)
-    .build::<_, http_body_util::Empty<hyper::body::Bytes>>(connector);
+    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .pool_max_idle_per_host(0)
+        .build::<_, http_body_util::Empty<hyper::body::Bytes>>(connector);
     // Build a GET request to a mock URI with headers.
     // Uses mixed-case headers to match your style and verify case-insensitive handling.
     let request = hyper::Request::builder()
