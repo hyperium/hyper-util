@@ -14,10 +14,12 @@ use http::Uri;
 use hyper::rt::{Read, Write};
 use tower_service::Service;
 
+use bytes::BytesMut;
+
 use pin_project_lite::pin_project;
 
 /// TODO
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SocksV4<C> {
     inner: C,
     config: SocksConfig,
@@ -61,6 +63,15 @@ impl<C> SocksV4<C> {
             config: SocksConfig::new(proxy_dst),
         }
     }
+
+    /// Resolve domain names locally on the client, rather than on the proxy server.
+    ///
+    /// Disabled by default as local resolution of domain names can be detected as a
+    /// DNS leak.
+    pub fn local_dns(mut self, local_dns: bool) -> Self {
+        self.config.local_dns = local_dns;
+        self
+    }
 }
 
 impl SocksConfig {
@@ -84,9 +95,7 @@ impl SocksConfig {
             Ok(IpAddr::V6(_)) => return Err(SocksV4Error::IpV6.into()),
             Ok(IpAddr::V4(ip)) => Address::Socket(SocketAddrV4::new(ip.into(), port)),
             Err(_) => {
-                if !self.local_dns {
-                    Address::Domain(host, port)
-                } else {
+                if self.local_dns {
                     (host, port)
                         .to_socket_addrs()?
                         .find_map(|s| {
@@ -97,19 +106,22 @@ impl SocksConfig {
                             }
                         })
                         .ok_or(super::SocksError::DnsFailure)?
+                } else {
+                    Address::Domain(host, port)
                 }
             }
         };
 
-        let mut buf = vec![0; 512];
+        let mut send_buf = BytesMut::with_capacity(1024);
+        let mut recv_buf = BytesMut::with_capacity(1024);
 
         // Send Request
         let req = Request(&address);
-        let n = req.write_to_buf(&mut buf[..])?;
-        crate::rt::write_all(&mut conn, &buf[..n]).await?;
+        let n = req.write_to_buf(&mut send_buf)?;
+        crate::rt::write_all(&mut conn, &send_buf[..n]).await?;
 
         // Read Response
-        let res: Response = super::read_message(&mut conn, &mut buf).await?;
+        let res: Response = super::read_message(&mut conn, &mut recv_buf).await?;
         if res.0 == Status::Success {
             Ok(conn)
         } else {
@@ -138,7 +150,7 @@ where
         let connecting = self.inner.call(config.proxy.clone());
 
         let fut = async move {
-            let port = dst.port().ok_or(super::SocksError::MissingPort)?.as_u16();
+            let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
             let host = dst
                 .host()
                 .ok_or(super::SocksError::MissingHost)?

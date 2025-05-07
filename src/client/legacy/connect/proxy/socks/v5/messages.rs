@@ -1,6 +1,6 @@
 use super::super::{ParsingError, SerializeError};
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, BytesMut};
 use std::net::SocketAddr;
 
 ///  +----+----------+----------+
@@ -79,8 +79,8 @@ pub enum Status {
 }
 
 impl NegotiationReq<'_> {
-    pub fn write_to_buf<B: BufMut>(&self, mut buf: B) -> Result<usize, SerializeError> {
-        if buf.remaining_mut() < 3 {
+    pub fn write_to_buf(&self, buf: &mut BytesMut) -> Result<usize, SerializeError> {
+        if buf.capacity() - buf.len() < 3 {
             return Err(SerializeError::WouldOverflow);
         }
 
@@ -92,10 +92,10 @@ impl NegotiationReq<'_> {
     }
 }
 
-impl TryFrom<&[u8]> for NegotiationRes {
+impl TryFrom<&mut BytesMut> for NegotiationRes {
     type Error = ParsingError;
 
-    fn try_from(mut buf: &[u8]) -> Result<Self, ParsingError> {
+    fn try_from(buf: &mut BytesMut) -> Result<Self, ParsingError> {
         if buf.remaining() < 2 {
             return Err(ParsingError::Incomplete);
         }
@@ -110,8 +110,8 @@ impl TryFrom<&[u8]> for NegotiationRes {
 }
 
 impl AuthenticationReq<'_> {
-    pub fn write_to_buf<B: BufMut>(&self, mut buf: B) -> Result<usize, SerializeError> {
-        if buf.remaining_mut() < 3 + self.0.len() + self.1.len() {
+    pub fn write_to_buf(&self, buf: &mut BytesMut) -> Result<usize, SerializeError> {
+        if buf.capacity() - buf.len() < 3 + self.0.len() + self.1.len() {
             return Err(SerializeError::WouldOverflow);
         }
 
@@ -127,10 +127,10 @@ impl AuthenticationReq<'_> {
     }
 }
 
-impl TryFrom<&[u8]> for AuthenticationRes {
+impl TryFrom<&mut BytesMut> for AuthenticationRes {
     type Error = ParsingError;
 
-    fn try_from(mut buf: &[u8]) -> Result<Self, ParsingError> {
+    fn try_from(buf: &mut BytesMut) -> Result<Self, ParsingError> {
         if buf.remaining() < 2 {
             return Err(ParsingError::Incomplete);
         }
@@ -148,14 +148,14 @@ impl TryFrom<&[u8]> for AuthenticationRes {
 }
 
 impl ProxyReq<'_> {
-    pub fn write_to_buf<B: BufMut>(&self, mut buf: B) -> Result<usize, SerializeError> {
+    pub fn write_to_buf(&self, buf: &mut BytesMut) -> Result<usize, SerializeError> {
         let addr_len = match self.0 {
             Address::Socket(SocketAddr::V4(_)) => 1 + 4 + 2,
             Address::Socket(SocketAddr::V6(_)) => 1 + 16 + 2,
             Address::Domain(ref domain, _) => 1 + 1 + domain.len() + 2,
         };
 
-        if buf.remaining_mut() < 3 + addr_len {
+        if buf.capacity() - buf.len() < 3 + addr_len {
             return Err(SerializeError::WouldOverflow);
         }
 
@@ -168,10 +168,10 @@ impl ProxyReq<'_> {
     }
 }
 
-impl TryFrom<&[u8]> for ProxyRes {
+impl TryFrom<&mut BytesMut> for ProxyRes {
     type Error = ParsingError;
 
-    fn try_from(mut buf: &[u8]) -> Result<Self, ParsingError> {
+    fn try_from(buf: &mut BytesMut) -> Result<Self, ParsingError> {
         if buf.remaining() < 2 {
             return Err(ParsingError::Incomplete);
         }
@@ -197,10 +197,10 @@ impl TryFrom<&[u8]> for ProxyRes {
 }
 
 impl Address {
-    pub fn write_to_buf<B: BufMut>(&self, mut buf: B) -> Result<usize, SerializeError> {
+    pub fn write_to_buf(&self, buf: &mut BytesMut) -> Result<usize, SerializeError> {
         match self {
             Self::Socket(SocketAddr::V4(v4)) => {
-                if buf.remaining_mut() < 1 + 4 + 2 {
+                if buf.capacity() - buf.len() < 1 + 4 + 2 {
                     return Err(SerializeError::WouldOverflow);
                 }
 
@@ -212,7 +212,7 @@ impl Address {
             }
 
             Self::Socket(SocketAddr::V6(v6)) => {
-                if buf.remaining_mut() < 1 + 16 + 2 {
+                if buf.capacity() - buf.len() < 1 + 16 + 2 {
                     return Err(SerializeError::WouldOverflow);
                 }
 
@@ -224,7 +224,7 @@ impl Address {
             }
 
             Self::Domain(domain, port) => {
-                if buf.remaining_mut() < 1 + 1 + domain.len() + 2 {
+                if buf.capacity() - buf.len() < 1 + 1 + domain.len() + 2 {
                     return Err(SerializeError::WouldOverflow);
                 }
 
@@ -239,10 +239,10 @@ impl Address {
     }
 }
 
-impl TryFrom<&[u8]> for Address {
+impl TryFrom<&mut BytesMut> for Address {
     type Error = ParsingError;
 
-    fn try_from(mut buf: &[u8]) -> Result<Self, Self::Error> {
+    fn try_from(buf: &mut BytesMut) -> Result<Self, Self::Error> {
         if buf.remaining() < 2 {
             return Err(ParsingError::Incomplete);
         }

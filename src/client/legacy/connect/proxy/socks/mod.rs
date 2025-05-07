@@ -4,6 +4,8 @@ pub use v5::{SocksV5, SocksV5Error};
 mod v4;
 pub use v4::{SocksV4, SocksV4Error};
 
+use bytes::BytesMut;
+
 use hyper::rt::Read;
 
 #[derive(Debug)]
@@ -25,6 +27,7 @@ pub enum SocksError<C> {
 #[derive(Debug)]
 pub enum ParsingError {
     Incomplete,
+    WouldOverflow,
     Other,
 }
 
@@ -33,24 +36,33 @@ pub enum SerializeError {
     WouldOverflow,
 }
 
-async fn read_message<T, M, C>(mut conn: &mut T, buf: &mut [u8]) -> Result<M, SocksError<C>>
+async fn read_message<T, M, C>(mut conn: &mut T, buf: &mut BytesMut) -> Result<M, SocksError<C>>
 where
     T: Read + Unpin,
-    M: for<'a> TryFrom<&'a [u8], Error = ParsingError>,
+    M: for<'a> TryFrom<&'a mut BytesMut, Error = ParsingError>,
 {
-    let mut n = 0;
     loop {
-        let read = crate::rt::read(&mut conn, buf).await?;
+        let n = unsafe {
+            let spare = &mut *(buf.spare_capacity_mut() as *mut _ as *mut [u8]);
+            let n = crate::rt::read(&mut conn, spare).await?;
+            buf.set_len(buf.len() + n);
+            n
+        };
 
-        if read == 0 {
-            return Err(
-                std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "unexpected eof").into(),
-            );
-        }
-
-        n += read;
-        match M::try_from(&buf[..n]) {
-            Err(ParsingError::Incomplete) => continue,
+        match M::try_from(buf) {
+            Err(ParsingError::Incomplete) => {
+                if n == 0 {
+                    if buf.spare_capacity_mut().len() == 0 {
+                        return Err(SocksError::Parsing(ParsingError::WouldOverflow));
+                    } else {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "unexpected eof",
+                        )
+                        .into());
+                    }
+                }
+            }
             Err(err) => return Err(err.into()),
             Ok(res) => return Ok(res),
         }
@@ -77,6 +89,8 @@ impl<C> std::fmt::Display for SocksError<C> {
         }
     }
 }
+
+impl<C: std::fmt::Debug + std::fmt::Display> std::error::Error for SocksError<C> {}
 
 impl<C> From<std::io::Error> for SocksError<C> {
     fn from(err: std::io::Error) -> Self {

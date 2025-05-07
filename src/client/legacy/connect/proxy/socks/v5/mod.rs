@@ -14,10 +14,12 @@ use http::Uri;
 use hyper::rt::{Read, Write};
 use tower_service::Service;
 
+use bytes::BytesMut;
+
 use pin_project_lite::pin_project;
 
 /// TODO
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SocksV5<C> {
     inner: C,
     config: SocksConfig,
@@ -32,6 +34,7 @@ pub struct SocksConfig {
     optimistic: bool,
 }
 
+#[derive(Debug)]
 enum State {
     SendingNegReq,
     ReadingNegRes,
@@ -84,7 +87,7 @@ impl<C> SocksV5<C> {
         self
     }
 
-    /// Resolve domain names locally on the client, rather than on the client.
+    /// Resolve domain names locally on the client, rather than on the proxy server.
     ///
     /// Disabled by default as local resolution of domain names can be detected as a
     /// DNS leak.
@@ -131,15 +134,15 @@ impl SocksConfig {
         let address = match host.parse::<IpAddr>() {
             Ok(ip) => Address::Socket(SocketAddr::new(ip, port)),
             Err(_) if host.len() <= 255 => {
-                if !self.local_dns {
-                    Address::Domain(host, port)
-                } else {
+                if self.local_dns {
                     let socket = (host, port)
                         .to_socket_addrs()?
                         .next()
                         .ok_or(super::SocksError::DnsFailure)?;
 
                     Address::Socket(socket)
+                } else {
+                    Address::Domain(host, port)
                 }
             }
             Err(_) => return Err(SocksV5Error::HostTooLong.into()),
@@ -151,15 +154,18 @@ impl SocksConfig {
             AuthMethod::NoAuth
         };
 
-        let mut buf: [u8; 513] = [0; 513];
+        let mut recv_buf = BytesMut::with_capacity(1024);
+        let mut send_buf = BytesMut::with_capacity(1024);
         let mut state = State::SendingNegReq;
 
         loop {
             match state {
                 State::SendingNegReq => {
                     let req = NegotiationReq(&method);
-                    let n = req.write_to_buf(&mut buf[..])?;
-                    crate::rt::write_all(&mut conn, &buf[..n]).await?;
+
+                    let start = send_buf.len();
+                    req.write_to_buf(&mut send_buf)?;
+                    crate::rt::write_all(&mut conn, &send_buf[start..]).await?;
 
                     if self.optimistic {
                         if method == AuthMethod::UserPass {
@@ -173,7 +179,7 @@ impl SocksConfig {
                 }
 
                 State::ReadingNegRes => {
-                    let res: NegotiationRes = super::read_message(&mut conn, &mut buf).await?;
+                    let res: NegotiationRes = super::read_message(&mut conn, &mut recv_buf).await?;
 
                     if res.0 == AuthMethod::NoneAcceptable {
                         return Err(SocksV5Error::Auth(AuthError::Unsupported).into());
@@ -201,8 +207,10 @@ impl SocksConfig {
                 State::SendingAuthReq => {
                     let (user, pass) = self.proxy_auth.as_ref().unwrap();
                     let req = AuthenticationReq(&user, &pass);
-                    let n = req.write_to_buf(&mut buf[..])?;
-                    crate::rt::write_all(&mut conn, &buf[..n]).await?;
+
+                    let start = send_buf.len();
+                    req.write_to_buf(&mut send_buf)?;
+                    crate::rt::write_all(&mut conn, &send_buf[start..]).await?;
 
                     if self.optimistic {
                         state = State::SendingProxyReq;
@@ -212,19 +220,26 @@ impl SocksConfig {
                 }
 
                 State::ReadingAuthRes => {
-                    let res: AuthenticationRes = super::read_message(&mut conn, &mut buf).await?;
+                    let res: AuthenticationRes =
+                        super::read_message(&mut conn, &mut recv_buf).await?;
 
                     if !res.0 {
                         return Err(SocksV5Error::Auth(AuthError::Failed).into());
                     }
 
-                    state = State::SendingProxyReq;
+                    if self.optimistic {
+                        state = State::ReadingProxyRes;
+                    } else {
+                        state = State::SendingProxyReq;
+                    }
                 }
 
                 State::SendingProxyReq => {
                     let req = ProxyReq(&address);
-                    let n = req.write_to_buf(&mut buf[..])?;
-                    crate::rt::write_all(&mut conn, &buf[..n]).await?;
+
+                    let start = send_buf.len();
+                    req.write_to_buf(&mut send_buf)?;
+                    crate::rt::write_all(&mut conn, &send_buf[start..]).await?;
 
                     if self.optimistic {
                         state = State::ReadingNegRes;
@@ -234,7 +249,7 @@ impl SocksConfig {
                 }
 
                 State::ReadingProxyRes => {
-                    let res: ProxyRes = super::read_message(&mut conn, &mut buf).await?;
+                    let res: ProxyRes = super::read_message(&mut conn, &mut recv_buf).await?;
 
                     if res.0 == Status::Success {
                         return Ok(conn);
@@ -267,7 +282,7 @@ where
         let connecting = self.inner.call(config.proxy.clone());
 
         let fut = async move {
-            let port = dst.port().ok_or(super::SocksError::MissingPort)?.as_u16();
+            let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
             let host = dst
                 .host()
                 .ok_or(super::SocksError::MissingHost)?

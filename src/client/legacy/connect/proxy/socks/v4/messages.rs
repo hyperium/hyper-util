@@ -1,6 +1,6 @@
 use super::super::{ParsingError, SerializeError};
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, BytesMut};
 use std::net::SocketAddrV4;
 
 /// +-----+-----+----+----+----+----+----+----+-------------+------+------------+------+
@@ -80,24 +80,19 @@ impl Request<'_> {
     }
 }
 
-impl TryFrom<&[u8]> for Response {
+impl TryFrom<&mut BytesMut> for Response {
     type Error = ParsingError;
 
-    fn try_from(mut buf: &[u8]) -> Result<Self, Self::Error> {
-        println!("===");
-        println!("{buf:?}");
-        println!("===");
-
+    fn try_from(buf: &mut BytesMut) -> Result<Self, Self::Error> {
         if buf.remaining() < 8 {
             return Err(ParsingError::Incomplete);
         }
 
-        if buf.get_u8() != 0x04 {
+        if buf.get_u8() != 0x00 {
             return Err(ParsingError::Other);
         }
 
         let status = buf.get_u8().try_into()?;
-
         let _addr = {
             let port = buf.get_u16();
             let mut ip = [0; 4];
