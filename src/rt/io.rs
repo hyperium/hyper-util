@@ -1,9 +1,8 @@
+use std::future;
 use std::marker::Unpin;
 use std::pin::Pin;
-use std::task::Poll;
+use std::task::{ready, Poll};
 
-use futures_util::future;
-use futures_util::ready;
 use hyper::rt::{Read, ReadBuf, Write};
 
 pub(crate) async fn read<T>(io: &mut T, buf: &mut [u8]) -> Result<usize, std::io::Error>
