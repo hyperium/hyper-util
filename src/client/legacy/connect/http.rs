@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
 
+use futures_core::ready;
 use futures_util::future::Either;
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
@@ -464,7 +465,7 @@ where
     type Future = HttpConnecting<R>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        futures_util::ready!(self.resolver.poll_ready(cx)).map_err(ConnectError::dns)?;
+        ready!(self.resolver.poll_ready(cx)).map_err(ConnectError::dns)?;
         Poll::Ready(Ok(()))
     }
 

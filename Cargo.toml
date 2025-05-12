@@ -21,7 +21,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 base64 = { version = "0.22", optional = true }
 bytes = "1.7.1"
 futures-channel = { version = "0.3", optional = true }
-futures-util = { version = "0.3.16", default-features = false }
+futures-core = { version = "0.3" }
+futures-util = { version = "0.3.16", default-features = false, optional = true }
 http = "1.0"
 http-body = "1.0.0"
 hyper = "1.6.0"
@@ -37,6 +38,7 @@ tower-service = { version = "0.3", optional = true }
 [dev-dependencies]
 hyper = { version = "1.4.0", features = ["full"] }
 bytes = "1"
+futures-util = { version = "0.3.16", default-features = false, features = ["alloc"] }
 http-body-util = "0.1.0"
 tokio = { version = "1", features = ["macros", "test-util", "signal"] }
 tokio-test = "0.4"
@@ -69,13 +71,13 @@ full = [
 ]
 
 client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
-client-legacy = ["client", "dep:socket2", "tokio/sync", "dep:libc"]
+client-legacy = ["client", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util"]
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
 client-proxy-system = ["dep:system-configuration", "dep:windows-registry"]
 
 server = ["hyper/server"]
 server-auto = ["server", "http1", "http2"]
-server-graceful = ["server", "tokio/sync", "futures-util/alloc"]
+server-graceful = ["server", "tokio/sync"]
 
 service = ["dep:tower-service"]
 

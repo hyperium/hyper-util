@@ -291,7 +291,7 @@ pub(super) async fn resolve<R>(resolver: &mut R, name: Name) -> Result<R::Addrs,
 where
     R: Resolve,
 {
-    futures_util::future::poll_fn(|cx| resolver.poll_ready(cx)).await?;
+    crate::common::future::poll_fn(|cx| resolver.poll_ready(cx)).await?;
     resolver.resolve(name).await
 }
 

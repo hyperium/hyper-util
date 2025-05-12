@@ -4,6 +4,7 @@ use std::marker::{PhantomData, Unpin};
 use std::pin::Pin;
 use std::task::{self, Poll};
 
+use futures_core::ready;
 use http::{HeaderMap, HeaderValue, Uri};
 use hyper::rt::{Read, Write};
 use pin_project_lite::pin_project;
@@ -127,8 +128,7 @@ where
     type Future = Tunneling<C::Future, C::Response>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        futures_util::ready!(self.inner.poll_ready(cx))
-            .map_err(|e| TunnelError::ConnectFailed(e.into()))?;
+        ready!(self.inner.poll_ready(cx)).map_err(|e| TunnelError::ConnectFailed(e.into()))?;
         Poll::Ready(Ok(()))
     }
 

@@ -14,7 +14,7 @@ use std::task::{self, Poll};
 use std::time::{Duration, Instant};
 
 use futures_channel::oneshot;
-use futures_util::ready;
+use futures_core::ready;
 use tracing::{debug, trace};
 
 use hyper::rt::Sleep;
