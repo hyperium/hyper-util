@@ -360,8 +360,6 @@ async fn test_socks_v4_works() {
         let conn = connector.call(target_dst).await.expect("tunnel");
         let mut tcp = conn.into_inner();
 
-        // TODO: broken here.
-
         tcp.write_all(b"Hello World!").await.expect("write 1");
 
         let mut buf = [0u8; 64];

@@ -18,7 +18,11 @@ use bytes::BytesMut;
 
 use pin_project_lite::pin_project;
 
-/// TODO
+/// Tunnel Proxy via SOCKSv5
+///
+/// This is a connector that can be used by the `legacy::Client`. It wraps
+/// another connector, and after getting an underlying connection, it established
+/// a TCP tunnel over it using SOCKSv5.
 #[derive(Debug, Clone)]
 pub struct SocksV5<C> {
     inner: C,
@@ -154,8 +158,8 @@ impl SocksConfig {
             AuthMethod::NoAuth
         };
 
-        let mut recv_buf = BytesMut::with_capacity(1024);
-        let mut send_buf = BytesMut::with_capacity(1024);
+        let mut recv_buf = BytesMut::with_capacity(513); // Max length of valid recievable message is 513 from Auth Request
+        let mut send_buf = BytesMut::with_capacity(262); // Max length of valid sendable message is 262 from Auth Response
         let mut state = State::SendingNegReq;
 
         loop {

@@ -41,13 +41,11 @@ where
     T: Read + Unpin,
     M: for<'a> TryFrom<&'a mut BytesMut, Error = ParsingError>,
 {
+    let mut tmp = [0; 513];
+
     loop {
-        let n = unsafe {
-            let spare = &mut *(buf.spare_capacity_mut() as *mut _ as *mut [u8]);
-            let n = crate::rt::read(&mut conn, spare).await?;
-            buf.set_len(buf.len() + n);
-            n
-        };
+        let n = crate::rt::read(&mut conn, &mut tmp).await?;
+        buf.extend_from_slice(&tmp[..n]);
 
         match M::try_from(buf) {
             Err(ParsingError::Incomplete) => {
