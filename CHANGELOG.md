@@ -1,3 +1,14 @@
+# 0.1.12 (2025-05-19)
+
+- Add `client::legacy::proxy::Tunnel` connector that wraps another connector with HTTP tunneling.
+- Add `client::legacy::proxy::{SocksV4, SocksV5}` connectors that wraps another connector with SOCKS.
+- Add `client::proxy::matcher::Matcher` type that can use environment variables to match proxy rules.
+- Add `server::graceful::Watcher` type that can be sent to watch a connection in another task.
+- Add `GracefulShutdown::count()` method to get number of currently watched connections.
+- Fix missing `must_use` attributes on `Connection` futures.
+- Fix tracing span in GAI resolver that can cause panics.
+
+
 # 0.1.11 (2025-03-31)
 
 - Add `tracing` crate feature with support in `TokioExecutor`.
