@@ -1068,23 +1068,11 @@ fn connection_poisoning() {
 // comments explain the purpose and logic of each section.
 
 //XXX: can manually run like this:
-// $ RUST_LOG=hyper=trace cargo test --features="http1,http2,server,client-legacy" --test legacy_client -- test_connection_error_propagation test_incomplete_message_error --nocapture
-// $ RUST_LOG=hyper=trace cargo test --all-features --test legacy_client -- --nocapture
+// $ cargo test --features="http1,http2,server,client-legacy" --test legacy_client -- test_connection_error_propagation test_incomplete_message_error --nocapture
+// $ cargo test --all-features --test legacy_client -- --nocapture
 // $ cargo test --all-features --test legacy_client
-// --nocapture is actually not necessary to see the trace messages.
 
 use std::error::Error; // needed for .source() eg. error[E0599]: no method named `source` found for struct `hyper_util::client::legacy::Error` in the current scope
-
-#[cfg(test)]
-#[ctor::ctor]
-fn init_tracing() {
-    // Initialize a tracing subscriber that logs to stderr with TRACE level.
-    // Use EnvFilter to respect RUST_LOG directives (e.g., hyper=trace).
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_writer(std::io::stderr)
-        .init();
-}
 
 // Helper function to debug byte slices by attempting to interpret them as UTF-8.
 // If the bytes are valid UTF-8, they are printed as a string; otherwise, they are
