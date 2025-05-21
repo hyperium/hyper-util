@@ -41,6 +41,8 @@ pub trait Poolable: Unpin + Send + Sized + 'static {
     /// Allows for HTTP/2 to return a shared reservation.
     fn reserve(self) -> Reservation<Self>;
     fn can_share(&self) -> bool;
+    /// Mark the connection as reused.
+    fn mark_as_reused(&mut self);
 }
 
 pub trait Key: Eq + Hash + Clone + Debug + Unpin + Send + 'static {}
@@ -266,7 +268,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
         }
     }
 
-    fn reuse(&self, key: &K, value: T) -> Pooled<T, K> {
+    fn reuse(&self, key: &K, mut value: T) -> Pooled<T, K> {
         debug!("reuse idle connection for {:?}", key);
         // TODO: unhack this
         // In Pool::pooled(), which is used for inserting brand new connections,
@@ -282,6 +284,8 @@ impl<T: Poolable, K: Key> Pool<T, K> {
                 pool_ref = WeakOpt::downgrade(enabled);
             }
         }
+
+        value.mark_as_reused();
 
         Pooled {
             is_reused: true,
@@ -864,6 +868,8 @@ mod tests {
         fn can_share(&self) -> bool {
             false
         }
+
+        fn mark_as_reused(&mut self) {}
     }
 
     fn c<T: Poolable, K: Key>(key: K) -> Connecting<T, K> {
@@ -1074,6 +1080,8 @@ mod tests {
         fn can_share(&self) -> bool {
             false
         }
+
+        fn mark_as_reused(&mut self) {}
     }
 
     #[test]
@@ -1089,5 +1097,72 @@ mod tests {
         );
 
         assert!(!pool.locked().idle.contains_key(&key));
+    }
+
+    #[derive(Debug, PartialEq, Eq, Clone)]
+    struct CanMarkReused {
+        #[allow(unused)]
+        val: i32,
+        is_reused: bool,
+    }
+
+    impl Poolable for CanMarkReused {
+        fn is_open(&self) -> bool {
+            true
+        }
+
+        fn reserve(self) -> Reservation<Self> {
+            Reservation::Unique(self)
+        }
+
+        fn can_share(&self) -> bool {
+            false
+        }
+
+        fn mark_as_reused(&mut self) {
+            self.is_reused = true;
+        }
+    }
+
+    #[tokio::test]
+    async fn mark_conn_as_reused() {
+        let pool = pool_no_timer();
+        let key = host_key("foo");
+        pool.pooled(
+            c(key.clone()),
+            CanMarkReused {
+                val: 42,
+                is_reused: false,
+            },
+        );
+
+        let idle = pool
+            .locked()
+            .idle
+            .get(&key)
+            .expect("the just pooled connection should be idle")
+            .split_first()
+            .expect("should get the pooled connection")
+            .0
+            .value
+            .clone();
+        assert_eq!(
+            idle,
+            CanMarkReused {
+                val: 42,
+                is_reused: false
+            }
+        );
+
+        match pool.checkout(key).await {
+            Ok(pooled) => assert_eq!(
+                *pooled,
+                CanMarkReused {
+                    val: 42,
+                    is_reused: true
+                }
+            ),
+            Err(_) => panic!("not ready"),
+        };
     }
 }

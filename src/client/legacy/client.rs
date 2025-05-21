@@ -826,6 +826,10 @@ where
     fn can_share(&self) -> bool {
         self.is_http2()
     }
+
+    fn mark_as_reused(&mut self) {
+        self.conn_info.reuse();
+    }
 }
 
 enum ClientConnectError {
