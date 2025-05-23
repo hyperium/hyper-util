@@ -25,6 +25,7 @@ use super::connect::HttpConnector;
 use super::connect::{Alpn, Connect, Connected, Connection};
 use super::pool::{self, Ver};
 
+use crate::common::future::poll_fn;
 use crate::common::{lazy as hyper_lazy, timer, Exec, Lazy, SyncWrapper};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -360,7 +361,7 @@ where
         } else if !res.body().is_end_stream() {
             //let (delayed_tx, delayed_rx) = oneshot::channel::<()>();
             //res.body_mut().delayed_eof(delayed_rx);
-            let on_idle = future::poll_fn(move |cx| pooled.poll_ready(cx)).map(move |_| {
+            let on_idle = poll_fn(move |cx| pooled.poll_ready(cx)).map(move |_| {
                 // At this point, `pooled` is dropped, and had a chance
                 // to insert into the pool (if conn was idle)
                 //drop(delayed_tx);
@@ -370,7 +371,7 @@ where
         } else {
             // There's no body to delay, but the connection isn't
             // ready yet. Only re-insert when it's ready
-            let on_idle = future::poll_fn(move |cx| pooled.poll_ready(cx)).map(|_| ());
+            let on_idle = poll_fn(move |cx| pooled.poll_ready(cx)).map(|_| ());
 
             self.exec.execute(on_idle);
         }

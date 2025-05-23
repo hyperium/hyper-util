@@ -1,4 +1,4 @@
-use futures_util::ready;
+use futures_core::ready;
 use pin_project_lite::pin_project;
 use std::future::Future;
 use std::pin::Pin;
