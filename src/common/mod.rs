@@ -15,5 +15,3 @@ pub(crate) use exec::Exec;
 pub(crate) use lazy::{lazy, Started as Lazy};
 #[cfg(feature = "client")]
 pub(crate) use sync::SyncWrapper;
-
-pub(crate) mod future;
