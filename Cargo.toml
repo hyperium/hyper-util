@@ -21,7 +21,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 base64 = { version = "0.23", optional = true }
 bytes = "1.7.1"
 futures-channel = { version = "0.3", optional = true }
-futures-util = { version = "0.3.16", default-features = false, optional = true }
+futures-util = { version = "0.3.16", default-features = false, features = ["alloc"], optional = true }
 http = "1.0"
 http-body = "1.0.0"
 httparse = { version = "1", optional = true }
