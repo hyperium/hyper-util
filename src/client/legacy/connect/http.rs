@@ -692,7 +692,7 @@ impl fmt::Display for ConnectError {
         f.write_str(&self.msg)?;
 
         if let Some(ref cause) = self.cause {
-            write!(f, ": {}", cause)?;
+            write!(f, ": {cause}")?;
         }
 
         Ok(())
@@ -1100,7 +1100,7 @@ mod tests {
         let (bind_ip_v4, bind_ip_v6) = get_local_ips();
         let server4 = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = server4.local_addr().unwrap().port();
-        let server6 = TcpListener::bind(&format!("[::1]:{}", port)).unwrap();
+        let server6 = TcpListener::bind(format!("[::1]:{port}")).unwrap();
 
         let assert_client_ip = |dst: String, server: TcpListener, expected_ip: IpAddr| async move {
             let mut connector = HttpConnector::new();
@@ -1120,11 +1120,11 @@ mod tests {
         };
 
         if let Some(ip) = bind_ip_v4 {
-            assert_client_ip(format!("http://127.0.0.1:{}", port), server4, ip.into()).await;
+            assert_client_ip(format!("http://127.0.0.1:{port}"), server4, ip.into()).await;
         }
 
         if let Some(ip) = bind_ip_v6 {
-            assert_client_ip(format!("http://[::1]:{}", port), server6, ip.into()).await;
+            assert_client_ip(format!("http://[::1]:{port}"), server6, ip.into()).await;
         }
     }
 
@@ -1141,7 +1141,7 @@ mod tests {
         let server4 = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = server4.local_addr().unwrap().port();
 
-        let server6 = TcpListener::bind(&format!("[::1]:{}", port)).unwrap();
+        let server6 = TcpListener::bind(format!("[::1]:{port}")).unwrap();
 
         let assert_interface_name =
             |dst: String,
@@ -1164,14 +1164,14 @@ mod tests {
             };
 
         assert_interface_name(
-            format!("http://127.0.0.1:{}", port),
+            format!("http://127.0.0.1:{port}"),
             server4,
             interface.clone(),
             interface.clone(),
         )
         .await;
         assert_interface_name(
-            format!("http://[::1]:{}", port),
+            format!("http://[::1]:{port}"),
             server6,
             interface.clone(),
             interface.clone(),
@@ -1191,7 +1191,7 @@ mod tests {
 
         let server4 = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = server4.local_addr().unwrap();
-        let _server6 = TcpListener::bind(&format!("[::1]:{}", addr.port())).unwrap();
+        let _server6 = TcpListener::bind(format!("[::1]:{}", addr.port())).unwrap();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1295,7 +1295,7 @@ mod tests {
                 .block_on(async move {
                     let addrs = hosts
                         .iter()
-                        .map(|host| (host.clone(), addr.port()).into())
+                        .map(|host| (*host, addr.port()).into())
                         .collect();
                     let cfg = Config {
                         local_address_ipv4: None,
@@ -1402,8 +1402,10 @@ mod tests {
 
     #[test]
     fn tcp_keepalive_time_config() {
-        let mut kac = TcpKeepaliveConfig::default();
-        kac.time = Some(Duration::from_secs(60));
+        let kac = TcpKeepaliveConfig {
+            time: Some(Duration::from_secs(60)),
+            ..Default::default()
+        };
         if let Some(tcp_keepalive) = kac.into_tcpkeepalive() {
             assert!(format!("{tcp_keepalive:?}").contains("time: Some(60s)"));
         } else {
@@ -1414,8 +1416,10 @@ mod tests {
     #[cfg(not(any(target_os = "openbsd", target_os = "redox", target_os = "solaris")))]
     #[test]
     fn tcp_keepalive_interval_config() {
-        let mut kac = TcpKeepaliveConfig::default();
-        kac.interval = Some(Duration::from_secs(1));
+        let kac = TcpKeepaliveConfig {
+            interval: Some(Duration::from_secs(1)),
+            ..Default::default()
+        };
         if let Some(tcp_keepalive) = kac.into_tcpkeepalive() {
             assert!(format!("{tcp_keepalive:?}").contains("interval: Some(1s)"));
         } else {
@@ -1431,8 +1435,10 @@ mod tests {
     )))]
     #[test]
     fn tcp_keepalive_retries_config() {
-        let mut kac = TcpKeepaliveConfig::default();
-        kac.retries = Some(3);
+        let kac = TcpKeepaliveConfig {
+            retries: Some(3),
+            ..Default::default()
+        };
         if let Some(tcp_keepalive) = kac.into_tcpkeepalive() {
             assert!(format!("{tcp_keepalive:?}").contains("retries: Some(3)"));
         } else {
