@@ -70,7 +70,7 @@ fn drop_body_before_eof_closes_connection() {
     });
 
     let req = Request::builder()
-        .uri(&*format!("http://{}/a", addr))
+        .uri(&*format!("http://{addr}/a"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let res = client.request(req).map_ok(move |res| {
@@ -110,9 +110,8 @@ async fn drop_client_closes_idle_connections() {
 
         // prevent this thread from closing until end of test, so the connection
         // stays open and idle until Client is dropped
-        match sock.read(&mut buf).await {
-            Ok(n) => assert_eq!(n, 0),
-            Err(_) => (),
+        if let Ok(n) = sock.read(&mut buf).await {
+            assert_eq!(n, 0);
         }
     });
 
@@ -122,7 +121,7 @@ async fn drop_client_closes_idle_connections() {
     ));
 
     let req = Request::builder()
-        .uri(&*format!("http://{}/a", addr))
+        .uri(&*format!("http://{addr}/a"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let res = client.request(req).map_ok(move |res| {
@@ -184,7 +183,7 @@ async fn drop_response_future_closes_in_progress_connection() {
         );
 
         let req = Request::builder()
-            .uri(&*format!("http://{}/a", addr))
+            .uri(&*format!("http://{addr}/a"))
             .body(Empty::<Bytes>::new())
             .unwrap();
         client.request(req).map(|_| unreachable!())
@@ -237,7 +236,7 @@ async fn drop_response_body_closes_in_progress_connection() {
         );
 
         let req = Request::builder()
-            .uri(&*format!("http://{}/a", addr))
+            .uri(&*format!("http://{addr}/a"))
             .body(Empty::<Bytes>::new())
             .unwrap();
         // notably, haven't read body yet
@@ -292,7 +291,7 @@ async fn no_keep_alive_closes_connection() {
         ));
 
     let req = Request::builder()
-        .uri(&*format!("http://{}/a", addr))
+        .uri(&*format!("http://{addr}/a"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let res = client.request(req).map_ok(move |res| {
@@ -338,7 +337,7 @@ async fn socket_disconnect_closes_idle_conn() {
     ));
 
     let req = Request::builder()
-        .uri(&*format!("http://{}/a", addr))
+        .uri(&*format!("http://{addr}/a"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let res = client.request(req).map_ok(move |res| {
@@ -418,7 +417,7 @@ fn client_keep_alive_0() {
 
     let rx = rx1;
     let req = Request::builder()
-        .uri(&*format!("http://{}/a", addr))
+        .uri(&*format!("http://{addr}/a"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let res = client.request(req);
@@ -432,7 +431,7 @@ fn client_keep_alive_0() {
 
     let rx = rx2;
     let req = Request::builder()
-        .uri(&*format!("http://{}/b", addr))
+        .uri(&*format!("http://{addr}/b"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let res = client.request(req);
@@ -490,7 +489,7 @@ fn client_keep_alive_extra_body() {
     let rx = rx1;
     let req = Request::builder()
         .method("HEAD")
-        .uri(&*format!("http://{}/a", addr))
+        .uri(&*format!("http://{addr}/a"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let res = client.request(req);
@@ -500,7 +499,7 @@ fn client_keep_alive_extra_body() {
 
     let rx = rx2;
     let req = Request::builder()
-        .uri(&*format!("http://{}/b", addr))
+        .uri(&*format!("http://{addr}/b"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let res = client.request(req);
@@ -555,7 +554,7 @@ async fn client_keep_alive_when_response_before_request_body_ends() {
 
     let req = Request::builder()
         .method("POST")
-        .uri(&*format!("http://{}/a", addr))
+        .uri(&*format!("http://{addr}/a"))
         .body(StreamBody::new(delayed_body))
         .unwrap();
     let res = client.request(req).map_ok(move |res| {
@@ -630,7 +629,7 @@ async fn client_keep_alive_eager_when_chunked() {
 
     let rx = rx1;
     let req = Request::builder()
-        .uri(&*format!("http://{}/a", addr))
+        .uri(&*format!("http://{addr}/a"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let fut = client.request(req);
@@ -650,7 +649,7 @@ async fn client_keep_alive_eager_when_chunked() {
 
     let rx = rx2;
     let req = Request::builder()
-        .uri(&*format!("http://{}/b", addr))
+        .uri(&*format!("http://{addr}/b"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let fut = client.request(req);
@@ -684,10 +683,7 @@ fn connect_proxy_sends_absolute_uri() {
             .unwrap();
         let mut buf = [0; 4096];
         let n = sock.read(&mut buf).expect("read 1");
-        let expected = format!(
-            "GET http://{addr}/foo/bar HTTP/1.1\r\nhost: {addr}\r\n\r\n",
-            addr = addr
-        );
+        let expected = format!("GET http://{addr}/foo/bar HTTP/1.1\r\nhost: {addr}\r\n\r\n");
         assert_eq!(s(&buf[..n]), expected);
 
         sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
@@ -697,7 +693,7 @@ fn connect_proxy_sends_absolute_uri() {
 
     let rx = rx1;
     let req = Request::builder()
-        .uri(&*format!("http://{}/foo/bar", addr))
+        .uri(&*format!("http://{addr}/foo/bar"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let res = client.request(req);
@@ -724,10 +720,7 @@ fn connect_proxy_http_connect_sends_authority_form() {
             .unwrap();
         let mut buf = [0; 4096];
         let n = sock.read(&mut buf).expect("read 1");
-        let expected = format!(
-            "CONNECT {addr} HTTP/1.1\r\nhost: {addr}\r\n\r\n",
-            addr = addr
-        );
+        let expected = format!("CONNECT {addr} HTTP/1.1\r\nhost: {addr}\r\n\r\n");
         assert_eq!(s(&buf[..n]), expected);
 
         sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
@@ -738,7 +731,7 @@ fn connect_proxy_http_connect_sends_authority_form() {
     let rx = rx1;
     let req = Request::builder()
         .method("CONNECT")
-        .uri(&*format!("http://{}/useless/path", addr))
+        .uri(&*format!("http://{addr}/useless/path"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let res = client.request(req);
@@ -787,7 +780,7 @@ fn client_upgrade() {
 
     let req = Request::builder()
         .method("GET")
-        .uri(&*format!("http://{}/up", addr))
+        .uri(&*format!("http://{addr}/up"))
         .body(Empty::<Bytes>::new())
         .unwrap();
 
@@ -832,7 +825,7 @@ fn client_http2_upgrade() {
         let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
         // IMPORTANT: This is required to advertise our support for HTTP/2 websockets to the client.
         builder.http2().enable_connect_protocol();
-        let _ = builder
+        builder
             .serve_connection_with_upgrades(
                 stream,
                 service_fn(|req| async move {
@@ -867,7 +860,7 @@ fn client_http2_upgrade() {
 
     let req = Request::builder()
         .method(Method::CONNECT)
-        .uri(&*format!("http://{}/up", addr))
+        .uri(&*format!("http://{addr}/up"))
         .header(http::header::SEC_WEBSOCKET_VERSION, "13")
         .version(Version::HTTP_2)
         .extension(hyper::ext::Protocol::from_static("websocket"))
@@ -911,7 +904,7 @@ fn alpn_h2() {
     rt.spawn(async move {
         let (stream, _) = listener.accept().await.expect("accept");
         let stream = TokioIo::new(stream);
-        let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+        hyper::server::conn::http2::Builder::new(TokioExecutor::new())
             .serve_connection(
                 stream,
                 service_fn(|req| async move {
@@ -925,9 +918,7 @@ fn alpn_h2() {
 
     assert_eq!(connects.load(Ordering::SeqCst), 0);
 
-    let url = format!("http://{}/a", addr)
-        .parse::<::hyper::Uri>()
-        .unwrap();
+    let url = format!("http://{addr}/a").parse::<::hyper::Uri>().unwrap();
     let res1 = client.get(url.clone());
     let res2 = client.get(url.clone());
     let res3 = client.get(url.clone());
@@ -982,7 +973,7 @@ fn capture_connection_on_client() {
             .expect("write 1");
     });
     let mut req = Request::builder()
-        .uri(&*format!("http://{}/a", addr))
+        .uri(&*format!("http://{addr}/a"))
         .body(Empty::<Bytes>::new())
         .unwrap();
     let captured_conn = capture_connection(&mut req);
@@ -1028,7 +1019,7 @@ fn connection_poisoning() {
     });
     let make_request = || {
         Request::builder()
-            .uri(&*format!("http://{}/a", addr))
+            .uri(&*format!("http://{addr}/a"))
             .body(Empty::<Bytes>::new())
             .unwrap()
     };

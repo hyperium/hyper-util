@@ -11,7 +11,7 @@ async fn test_tunnel_works() {
     let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = tcp.local_addr().expect("local_addr");
 
-    let proxy_dst = format!("http://{}", addr).parse().expect("uri");
+    let proxy_dst = format!("http://{addr}").parse().expect("uri");
     let mut connector = Tunnel::new(proxy_dst, HttpConnector::new());
     let t1 = tokio::spawn(async move {
         let _conn = connector

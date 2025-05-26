@@ -284,9 +284,9 @@ where
             // it returns an error, there's not much else to retry
             .map_err(TrySendError::Nope)?;
 
-        req.extensions_mut()
-            .get_mut::<CaptureConnectionExtension>()
-            .map(|conn| conn.set(&pooled.conn_info));
+        if let Some(conn) = req.extensions_mut().get_mut::<CaptureConnectionExtension>() {
+            conn.set(&pooled.conn_info);
+        }
 
         if pooled.is_http1() {
             if req.version() == Version::HTTP_2 {
@@ -301,7 +301,7 @@ where
                 req.headers_mut().entry(HOST).or_insert_with(|| {
                     let hostname = uri.host().expect("authority implies host");
                     if let Some(port) = get_non_default_port(&uri) {
-                        let s = format!("{}:{}", hostname, port);
+                        let s = format!("{hostname}:{port}");
                         HeaderValue::from_str(&s)
                     } else {
                         HeaderValue::from_str(hostname)

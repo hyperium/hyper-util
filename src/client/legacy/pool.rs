@@ -878,7 +878,7 @@ mod tests {
     }
 
     fn pool_no_timer<T, K: Key>() -> Pool<T, K> {
-        pool_max_idle_no_timer(::std::usize::MAX)
+        pool_max_idle_no_timer(usize::MAX)
     }
 
     fn pool_max_idle_no_timer<T, K: Key>(max_idle: usize) -> Pool<T, K> {
@@ -959,7 +959,7 @@ mod tests {
         let poll_once = PollOnce(&mut checkout);
         // checkout.await should clean out the expired
         poll_once.await;
-        assert!(pool.locked().idle.get(&key).is_none());
+        assert!(!pool.locked().idle.contains_key(&key));
     }
 
     #[test]
@@ -983,7 +983,7 @@ mod tests {
         let pool = Pool::new(
             super::Config {
                 idle_timeout: Some(Duration::from_millis(10)),
-                max_idle_per_host: std::usize::MAX,
+                max_idle_per_host: usize::MAX,
             },
             TokioExecutor::new(),
             Some(TokioTimer::new()),
@@ -1005,7 +1005,7 @@ mod tests {
         // Yield so the Interval can reap...
         tokio::task::yield_now().await;
 
-        assert!(pool.locked().idle.get(&key).is_none());
+        assert!(!pool.locked().idle.contains_key(&key));
     }
 
     #[tokio::test]
@@ -1052,7 +1052,7 @@ mod tests {
         assert_eq!(pool.locked().waiters.get(&key).unwrap().len(), 1);
 
         drop(checkout2);
-        assert!(pool.locked().waiters.get(&key).is_none());
+        assert!(!pool.locked().waiters.contains_key(&key));
     }
 
     #[derive(Debug)]
