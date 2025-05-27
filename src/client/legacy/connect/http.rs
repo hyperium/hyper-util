@@ -490,12 +490,14 @@ fn get_host_port<'u>(config: &Config, dst: &'u Uri) -> Result<(&'u str, u16), Co
         if dst.scheme() != Some(&Scheme::HTTP) {
             return Err(ConnectError {
                 msg: INVALID_NOT_HTTP.into(),
+                addr: None,
                 cause: None,
             });
         }
     } else if dst.scheme().is_none() {
         return Err(ConnectError {
             msg: INVALID_MISSING_SCHEME.into(),
+            addr: None,
             cause: None,
         });
     }
@@ -505,6 +507,7 @@ fn get_host_port<'u>(config: &Config, dst: &'u Uri) -> Result<(&'u str, u16), Co
         None => {
             return Err(ConnectError {
                 msg: INVALID_MISSING_HOST.into(),
+                addr: None,
                 cause: None,
             })
         }
@@ -643,6 +646,7 @@ impl<R: Resolve> Future for HttpConnecting<R> {
 // Not publicly exported (so missing_docs doesn't trigger).
 pub struct ConnectError {
     msg: &'static str,
+    addr: Option<SocketAddr>,
     cause: Option<Box<dyn StdError + Send + Sync>>,
 }
 
@@ -653,6 +657,7 @@ impl ConnectError {
     {
         ConnectError {
             msg,
+            addr: None,
             cause: Some(cause.into()),
         }
     }
@@ -676,6 +681,9 @@ impl fmt::Debug for ConnectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut b = f.debug_tuple("ConnectError");
         b.field(&self.msg);
+        if let Some(ref addr) = self.addr {
+            b.field(addr);
+        }
         if let Some(ref cause) = self.cause {
             b.field(cause);
         }
@@ -763,8 +771,9 @@ impl ConnectingTcpRemote {
                     debug!("connected to {}", addr);
                     return Ok(tcp);
                 }
-                Err(e) => {
+                Err(mut e) => {
                     trace!("connect error for {}: {:?}", addr, e);
+                    e.addr = Some(addr);
                     // only return the first error, we assume it's the most relevant
                     if err.is_none() {
                         err = Some(e);
