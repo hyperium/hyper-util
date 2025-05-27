@@ -1,3 +1,8 @@
+# 0.1.13 (2025-05-27)
+
+- Fix `HttpConnector` to always prefer IPv6 addresses first, if happy eyeballs is enabled.
+- Fix `legacy::Client` to return better errors if available on the connection.
+
 # 0.1.12 (2025-05-19)
 
 - Add `client::legacy::proxy::Tunnel` connector that wraps another connector with HTTP tunneling.
