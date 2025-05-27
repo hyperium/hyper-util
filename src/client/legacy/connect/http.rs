@@ -642,18 +642,17 @@ impl<R: Resolve> Future for HttpConnecting<R> {
 
 // Not publicly exported (so missing_docs doesn't trigger).
 pub struct ConnectError {
-    msg: Box<str>,
+    msg: &'static str,
     cause: Option<Box<dyn StdError + Send + Sync>>,
 }
 
 impl ConnectError {
-    fn new<S, E>(msg: S, cause: E) -> ConnectError
+    fn new<E>(msg: &'static str, cause: E) -> ConnectError
     where
-        S: Into<Box<str>>,
         E: Into<Box<dyn StdError + Send + Sync>>,
     {
         ConnectError {
-            msg: msg.into(),
+            msg,
             cause: Some(cause.into()),
         }
     }
@@ -665,9 +664,8 @@ impl ConnectError {
         ConnectError::new("dns error", cause)
     }
 
-    fn m<S, E>(msg: S) -> impl FnOnce(E) -> ConnectError
+    fn m<E>(msg: &'static str) -> impl FnOnce(E) -> ConnectError
     where
-        S: Into<Box<str>>,
         E: Into<Box<dyn StdError + Send + Sync>>,
     {
         move |cause| ConnectError::new(msg, cause)
@@ -676,26 +674,18 @@ impl ConnectError {
 
 impl fmt::Debug for ConnectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut b = f.debug_tuple("ConnectError");
+        b.field(&self.msg);
         if let Some(ref cause) = self.cause {
-            f.debug_tuple("ConnectError")
-                .field(&self.msg)
-                .field(cause)
-                .finish()
-        } else {
-            self.msg.fmt(f)
+            b.field(cause);
         }
+        b.finish()
     }
 }
 
 impl fmt::Display for ConnectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.msg)?;
-
-        if let Some(ref cause) = self.cause {
-            write!(f, ": {cause}")?;
-        }
-
-        Ok(())
+        f.write_str(&self.msg)
     }
 }
 
