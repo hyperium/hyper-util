@@ -765,7 +765,10 @@ impl ConnectingTcpRemote {
                 }
                 Err(e) => {
                     trace!("connect error for {}: {:?}", addr, e);
-                    err = Some(e);
+                    // only return the first error, we assume it's the most relevant
+                    if err.is_none() {
+                        err = Some(e);
+                    }
                 }
             }
         }
