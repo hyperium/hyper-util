@@ -12,7 +12,11 @@ mod common;
 pub mod rt;
 #[cfg(feature = "server")]
 pub mod server;
-#[cfg(any(feature = "service", feature = "client-legacy"))]
+#[cfg(any(
+    feature = "service",
+    feature = "client-legacy",
+    feature = "client-pool",
+))]
 pub mod service;
 
 mod error;

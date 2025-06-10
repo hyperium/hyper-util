@@ -43,6 +43,7 @@ futures-util = { version = "0.3.16", default-features = false, features = ["allo
 http-body-util = "0.1.0"
 tokio = { version = "1", features = ["macros", "test-util", "signal"] }
 tokio-test = "0.4"
+tower = { version = "0.5", features = ["util"] }
 tower-test = "0.4"
 pretty_env_logger = "0.5"
 
@@ -99,6 +100,10 @@ __internal_happy_eyeballs_tests = []
 
 [[example]]
 name = "client"
+required-features = ["client-legacy", "client-pool", "http1", "tokio"]
+
+[[example]]
+name = "client_legacy"
 required-features = ["client-legacy", "http1", "tokio"]
 
 [[example]]
