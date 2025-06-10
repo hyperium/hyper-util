@@ -4,6 +4,11 @@ pub use v5::{SocksV5, SocksV5Error};
 mod v4;
 pub use v4::{SocksV4, SocksV4Error};
 
+use pin_project_lite::pin_project;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use bytes::BytesMut;
 
 use hyper::rt::Read;
@@ -117,5 +122,33 @@ impl<C> From<SocksV4Error> for SocksError<C> {
 impl<C> From<SocksV5Error> for SocksError<C> {
     fn from(err: SocksV5Error) -> Self {
         Self::V5(err)
+    }
+}
+
+pin_project! {
+    // Not publicly exported (so missing_docs doesn't trigger).
+    //
+    // We return this `Future` instead of the `Pin<Box<dyn Future>>` directly
+    // so that users don't rely on it fitting in a `Pin<Box<dyn Future>>` slot
+    // (and thus we can change the type in the future).
+    #[must_use = "futures do nothing unless polled"]
+    #[allow(missing_debug_implementations)]
+    pub struct Handshaking<F, T, E> {
+        #[pin]
+        fut: BoxHandshaking<T, E>,
+        _marker: std::marker::PhantomData<F>
+    }
+}
+
+type BoxHandshaking<T, E> = Pin<Box<dyn Future<Output = Result<T, SocksError<E>>> + Send>>;
+
+impl<F, T, E> Future for Handshaking<F, T, E>
+where
+    F: Future<Output = Result<T, E>>,
+{
+    type Output = Result<T, SocksError<E>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.project().fut.poll(cx)
     }
 }

@@ -4,11 +4,8 @@ pub use errors::*;
 mod messages;
 use messages::*;
 
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::task::{Context, Poll};
 
 use http::Uri;
 use hyper::rt::{Read, Write};
@@ -16,7 +13,7 @@ use tower_service::Service;
 
 use bytes::BytesMut;
 
-use pin_project_lite::pin_project;
+use super::{Handshaking, SocksError};
 
 /// Tunnel Proxy via SOCKSv5
 ///
@@ -47,23 +44,6 @@ enum State {
     SendingProxyReq,
     ReadingProxyRes,
 }
-
-pin_project! {
-    // Not publicly exported (so missing_docs doesn't trigger).
-    //
-    // We return this `Future` instead of the `Pin<Box<dyn Future>>` directly
-    // so that users don't rely on it fitting in a `Pin<Box<dyn Future>>` slot
-    // (and thus we can change the type in the future).
-    #[must_use = "futures do nothing unless polled"]
-    #[allow(missing_debug_implementations)]
-    pub struct Handshaking<F, T, E> {
-        #[pin]
-        fut: BoxHandshaking<T, E>,
-        _marker: std::marker::PhantomData<F>
-    }
-}
-
-type BoxHandshaking<T, E> = Pin<Box<dyn Future<Output = Result<T, super::SocksError<E>>> + Send>>;
 
 impl<C> SocksV5<C> {
     /// Create a new SOCKSv5 handshake service.
@@ -126,12 +106,7 @@ impl SocksConfig {
         }
     }
 
-    async fn execute<T, E>(
-        self,
-        mut conn: T,
-        host: String,
-        port: u16,
-    ) -> Result<T, super::SocksError<E>>
+    async fn execute<T, E>(self, mut conn: T, host: String, port: u16) -> Result<T, SocksError<E>>
     where
         T: Read + Write + Unpin,
     {
@@ -142,7 +117,7 @@ impl SocksConfig {
                     let socket = (host, port)
                         .to_socket_addrs()?
                         .next()
-                        .ok_or(super::SocksError::DnsFailure)?;
+                        .ok_or(SocksError::DnsFailure)?;
 
                     Address::Socket(socket)
                 } else {
@@ -272,11 +247,11 @@ where
     C::Error: Send + 'static,
 {
     type Response = C::Response;
-    type Error = super::SocksError<C::Error>;
+    type Error = SocksError<C::Error>;
     type Future = Handshaking<C::Future, C::Response, C::Error>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(super::SocksError::Inner)
+        self.inner.poll_ready(cx).map_err(SocksError::Inner)
     }
 
     fn call(&mut self, dst: Uri) -> Self::Future {
@@ -285,12 +260,9 @@ where
 
         let fut = async move {
             let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
-            let host = dst
-                .host()
-                .ok_or(super::SocksError::MissingHost)?
-                .to_string();
+            let host = dst.host().ok_or(SocksError::MissingHost)?.to_string();
 
-            let conn = connecting.await.map_err(super::SocksError::Inner)?;
+            let conn = connecting.await.map_err(SocksError::Inner)?;
             config.execute(conn, host, port).await
         };
 
@@ -298,16 +270,5 @@ where
             fut: Box::pin(fut),
             _marker: Default::default(),
         }
-    }
-}
-
-impl<F, T, E> Future for Handshaking<F, T, E>
-where
-    F: Future<Output = Result<T, E>>,
-{
-    type Output = Result<T, super::SocksError<E>>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project().fut.poll(cx)
     }
 }
