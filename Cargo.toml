@@ -60,6 +60,8 @@ default = []
 full = [
     "client",
     "client-legacy",
+    "client-proxy",
+    "client-proxy-system",
     "server",
     "server-auto",
     "server-graceful",
