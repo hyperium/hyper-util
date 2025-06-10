@@ -1,3 +1,8 @@
+# 0.1.14 (2025-06-04)
+
+- Fix `HttpConnector` to defer address family order to resolver sort order.
+- Fix `proxy::Matcher` to find HTTPS system proxies on Windows.
+
 # 0.1.13 (2025-05-27)
 
 - Fix `HttpConnector` to always prefer IPv6 addresses first, if happy eyeballs is enabled.
