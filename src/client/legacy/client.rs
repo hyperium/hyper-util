@@ -238,7 +238,8 @@ where
         let uri = req.uri().clone();
 
         loop {
-            req = match self.try_send_request(req, pool_key.clone()).await {
+            let pk: PK = pool_key.clone();
+            req = match self.try_send_request(req, pk).await {
                 Ok(resp) => return Ok(resp),
                 Err(TrySendError::Nope(err)) => return Err(err),
                 Err(TrySendError::Retryable {
@@ -268,8 +269,9 @@ where
         mut req: Request<B>,
         pool_key: PK,
     ) -> Result<Response<hyper::body::Incoming>, TrySendError<B>> {
+        let uri = req.uri().clone();
         let mut pooled = self
-            .connection_for(req.uri().clone(), pool_key)
+            .connection_for(uri, pool_key)
             .await
             // `connection_for` already retries checkout errors, so if
             // it returns an error, there's not much else to retry
@@ -376,7 +378,8 @@ where
         pool_key: PK,
     ) -> Result<pool::Pooled<PoolClient<B>, PK>, Error> {
         loop {
-            match self.one_connection_for(uri.clone(), pool_key.clone()).await {
+            let pk: PK = pool_key.clone();
+            match self.one_connection_for(uri.clone(), pk).await {
                 Ok(pooled) => return Ok(pooled),
                 Err(ClientConnectError::Normal(err)) => return Err(err),
                 Err(ClientConnectError::CheckoutIsClosed(reason)) => {
