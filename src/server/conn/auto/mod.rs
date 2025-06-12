@@ -161,6 +161,55 @@ impl<E> Builder<E> {
         }
     }
 
+    /// Set whether HTTP/1 connections will write header names as title case at
+    /// the socket level.
+    ///
+    /// This setting only affects HTTP/1 connections. HTTP/2 connections are
+    /// not affected by this setting.
+    ///
+    /// Default is false.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use hyper_util::{
+    ///     rt::TokioExecutor,
+    ///     server::conn::auto,
+    /// };
+    ///
+    /// auto::Builder::new(TokioExecutor::new())
+    ///     .title_case_headers(true);
+    /// ```
+    #[cfg(feature = "http1")]
+    pub fn title_case_headers(mut self, enabled: bool) -> Self {
+        self.http1.title_case_headers(enabled);
+        self
+    }
+
+    /// Set whether HTTP/1 connections will preserve the original case of header names.
+    ///
+    /// This setting only affects HTTP/1 connections. HTTP/2 connections are
+    /// not affected by this setting.
+    ///
+    /// Default is false.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use hyper_util::{
+    ///     rt::TokioExecutor,
+    ///     server::conn::auto,
+    /// };
+    ///
+    /// auto::Builder::new(TokioExecutor::new())
+    ///     .preserve_header_case(true);
+    /// ```
+    #[cfg(feature = "http1")]
+    pub fn preserve_header_case(mut self, enabled: bool) -> Self {
+        self.http1.preserve_header_case(enabled);
+        self
+    }
+
     /// Bind a connection together with a [`Service`].
     pub fn serve_connection<I, S, B>(&self, io: I, service: S) -> Connection<'_, I, S, E>
     where
@@ -1110,6 +1159,30 @@ mod tests {
         builder.http1().keep_alive(true);
         builder.http2().keep_alive_interval(None);
         // builder.serve_connection(io, service);
+    }
+
+    #[test]
+    #[cfg(feature = "http1")]
+    fn title_case_headers_configuration() {
+        // Test title_case_headers can be set on the main builder
+        auto::Builder::new(TokioExecutor::new()).title_case_headers(true);
+
+        // Can be combined with other configuration
+        auto::Builder::new(TokioExecutor::new())
+            .title_case_headers(true)
+            .http1_only();
+    }
+
+    #[test]
+    #[cfg(feature = "http1")]
+    fn preserve_header_case_configuration() {
+        // Test preserve_header_case can be set on the main builder
+        auto::Builder::new(TokioExecutor::new()).preserve_header_case(true);
+
+        // Can be combined with other configuration
+        auto::Builder::new(TokioExecutor::new())
+            .preserve_header_case(true)
+            .http1_only();
     }
 
     #[cfg(not(miri))]
