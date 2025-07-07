@@ -172,7 +172,7 @@ impl TryFrom<&mut BytesMut> for ProxyRes {
     type Error = ParsingError;
 
     fn try_from(buf: &mut BytesMut) -> Result<Self, ParsingError> {
-        if buf.remaining() < 2 {
+        if buf.remaining() < 3 {
             return Err(ParsingError::Incomplete);
         }
 
@@ -248,6 +248,7 @@ impl TryFrom<&mut BytesMut> for Address {
         }
 
         Ok(match buf.get_u8() {
+            // IPv4
             0x01 => {
                 let mut ip = [0; 4];
 
@@ -260,7 +261,7 @@ impl TryFrom<&mut BytesMut> for Address {
 
                 Self::Socket(SocketAddr::new(ip.into(), port))
             }
-
+            // Domain
             0x03 => {
                 let len = buf.get_u8();
 
@@ -278,11 +279,11 @@ impl TryFrom<&mut BytesMut> for Address {
 
                 Self::Domain(domain, port)
             }
-
+            // IPv6
             0x04 => {
                 let mut ip = [0; 16];
 
-                if buf.remaining() < 6 {
+                if buf.remaining() < 18 {
                     return Err(ParsingError::Incomplete);
                 }
                 buf.copy_to_slice(&mut ip);
