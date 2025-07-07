@@ -1,3 +1,9 @@
+# 0.1.15 (2025-07-07)
+
+- Add header casing options to `auto::Builder`.
+- Fix `proxy::Socksv5` to check for enough bytes before parsing ipv6 responses.
+- Fix including `client-proxy` in the `full` feature set.
+
 # 0.1.14 (2025-06-04)
 
 - Fix `HttpConnector` to defer address family order to resolver sort order.
