@@ -2,7 +2,7 @@ mod test_utils;
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
-use std::pin::Pin;
+use std::pin::{pin, Pin};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::task::Poll;
@@ -142,8 +142,7 @@ async fn drop_client_closes_idle_connections() {
     drop(client);
 
     // and wait a few ticks for the connections to close
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
     t1.await.unwrap();
@@ -192,8 +191,7 @@ async fn drop_response_future_closes_in_progress_connection() {
     future::select(res, rx1).await;
 
     // res now dropped
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
 }
@@ -248,8 +246,7 @@ async fn drop_response_body_closes_in_progress_connection() {
     res.unwrap();
 
     // and wait a few ticks to see the connection drop
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
 }
@@ -301,8 +298,7 @@ async fn no_keep_alive_closes_connection() {
     let (res, _) = future::join(res, rx).await;
     res.unwrap();
 
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(close, t).await;
 }
@@ -348,8 +344,7 @@ async fn socket_disconnect_closes_idle_conn() {
     let (res, _) = future::join(res, rx).await;
     res.unwrap();
 
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
 }
@@ -571,8 +566,7 @@ async fn client_keep_alive_when_response_before_request_body_ends() {
     assert_eq!(connects.load(Ordering::Relaxed), 1);
 
     drop(client);
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
 }
