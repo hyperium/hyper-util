@@ -15,7 +15,7 @@ use tower_service::Service;
 /// This is a connector that can be used by the `legacy::Client`. It wraps
 /// another connector, and after getting an underlying connection, it creates
 /// an HTTP CONNECT tunnel over it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Tunnel<C> {
     headers: Headers,
     inner: C,
