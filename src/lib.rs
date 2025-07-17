@@ -15,4 +15,7 @@ pub mod server;
 #[cfg(any(feature = "service", feature = "client-legacy"))]
 pub mod service;
 
+#[cfg(any(feature = "service", feature = "client"))]
+pub use tower_service::Service;
+
 mod error;
