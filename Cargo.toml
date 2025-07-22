@@ -72,7 +72,7 @@ full = [
     "tracing",
 ]
 
-client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
+client = ["hyper/client", "tokio/net", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
 client-legacy = ["client", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util"]
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
 client-proxy-system = ["dep:system-configuration", "dep:windows-registry"]
@@ -86,7 +86,7 @@ service = ["dep:tower-service"]
 http1 = ["hyper/http1"]
 http2 = ["hyper/http2"]
 
-tokio = ["dep:tokio", "tokio/net", "tokio/rt", "tokio/time"]
+tokio = ["dep:tokio", "tokio/rt", "tokio/time"]
 
 tracing = ["dep:tracing"]
 
