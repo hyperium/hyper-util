@@ -1008,6 +1008,8 @@ mod tests {
 
         // Now wait passed the minimum interval more
         tokio::time::sleep(Duration::from_millis(70)).await;
+        // Yield in case other task hasn't been able to run :shrug:
+        tokio::task::yield_now().await;
 
         assert!(!pool.locked().idle.contains_key(&key));
     }
