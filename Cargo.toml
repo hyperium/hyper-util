@@ -9,11 +9,7 @@ repository = "https://github.com/hyperium/hyper-util"
 license = "MIT"
 authors = ["Sean McArthur <sean@seanmonstar.com>"]
 keywords = ["http", "hyper", "hyperium"]
-categories = [
-    "network-programming",
-    "web-programming::http-client",
-    "web-programming::http-server",
-]
+categories = ["network-programming", "web-programming::http-client", "web-programming::http-server"]
 edition = "2021"
 rust-version = "1.63"
 
@@ -35,18 +31,14 @@ libc = { version = "0.2", optional = true }
 percent-encoding = { version = "2.3", optional = true }
 pin-project-lite = "0.2.4"
 socket2 = { version = ">=0.5.9, <0.7", optional = true, features = ["all"] }
-tracing = { version = "0.1", default-features = false, features = [
-    "std",
-], optional = true }
+tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 tokio = { version = "1", optional = true, default-features = false }
 tower-service = { version = "0.3", optional = true }
 
 [dev-dependencies]
 hyper = { version = "1.4.0", features = ["full"] }
 bytes = "1"
-futures-util = { version = "0.3.16", default-features = false, features = [
-    "alloc",
-] }
+futures-util = { version = "0.3.16", default-features = false, features = ["alloc"] }
 http-body-util = "0.1.0"
 tokio = { version = "1", features = ["macros", "test-util", "signal"] }
 tokio-test = "0.4"
@@ -80,20 +72,8 @@ full = [
     "tracing",
 ]
 
-client = [
-    "hyper/client",
-    "tokio/net",
-    "dep:tracing",
-    "dep:futures-channel",
-    "dep:tower-service",
-]
-client-legacy = [
-    "client",
-    "dep:socket2",
-    "tokio/sync",
-    "dep:libc",
-    "dep:futures-util",
-]
+client = ["hyper/client", "tokio/net", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
+client-legacy = ["client", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util"]
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
 client-proxy-system = ["dep:system-configuration", "dep:windows-registry"]
 
