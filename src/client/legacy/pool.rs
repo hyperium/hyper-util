@@ -826,7 +826,7 @@ impl<T> WeakOpt<T> {
     }
 }
 
-#[cfg(all(test, not(miri)))]
+#[cfg(test)]
 mod tests {
     use std::fmt::Debug;
     use std::future::Future;

@@ -354,7 +354,6 @@ async fn socket_disconnect_closes_idle_conn() {
     future::select(t, close).await;
 }
 
-#[cfg(not(miri))]
 #[test]
 fn connect_call_is_lazy() {
     // We especially don't want connects() triggered if there's
@@ -1328,7 +1327,6 @@ impl tower_service::Service<hyper::Uri> for MockConnector {
 // Test for connection error propagation with PR #184.
 // Simulates a connection failure by setting failed=true and returning a custom io::Error.
 // Verifies the error propagates through hyper’s client as a hyper::Error(Io, ...).
-#[cfg(not(miri))]
 #[tokio::test]
 async fn test_connection_error_propagation_pr184() {
     // Define the error message for the simulated connection failure.
@@ -1386,7 +1384,6 @@ async fn test_connection_error_propagation_pr184() {
 // Simulates a connection that returns EOF immediately, causing hyper’s HTTP/1.1 parser
 // to fail with IncompleteMessage due to no response data.
 // Uses MockConnector with conn_error=None to keep failed=false, ensuring EOF behavior.
-#[cfg(not(miri))]
 #[tokio::test]
 async fn test_incomplete_message_error_pr184() {
     // Create an empty IoBuilder to simulate a connection with no data.
@@ -1446,7 +1443,6 @@ async fn test_incomplete_message_error_pr184() {
 // Test for a successful HTTP/1.1 connection using a mock connector.
 // Simulates a server that accepts a request and responds with a 200 OK.
 // Verifies the client correctly sends the request and receives the response.
-#[cfg(not(miri))]
 #[tokio::test]
 async fn test_successful_connection() {
     // Define the expected server response: a valid HTTP/1.1 200 OK with no body.
