@@ -326,7 +326,6 @@ mod tests {
     use hyper::rt::Executor;
     use tokio::sync::oneshot;
 
-    #[cfg(not(miri))]
     #[tokio::test]
     async fn simple_execute() -> Result<(), Box<dyn std::error::Error>> {
         let (tx, rx) = oneshot::channel();

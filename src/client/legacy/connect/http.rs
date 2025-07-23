@@ -509,7 +509,7 @@ fn get_host_port<'u>(config: &Config, dst: &'u Uri) -> Result<(&'u str, u16), Co
                 msg: INVALID_MISSING_HOST,
                 addr: None,
                 cause: None,
-            })
+            });
         }
     };
     let port = match dst.port() {
@@ -1038,7 +1038,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_errors_enforce_http() {
         let dst = "https://example.domain/foo/bar?baz".parse().unwrap();
         let connector = HttpConnector::new();
@@ -1082,7 +1081,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn test_errors_missing_scheme() {
         let dst = "example.domain".parse().unwrap();
         let mut connector = HttpConnector::new();
