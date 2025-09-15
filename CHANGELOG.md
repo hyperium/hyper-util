@@ -1,3 +1,7 @@
+# 0.1.17 (2025-09-15)
+
+- Fix `legacy::Client` to allow absolute-form URIs when `Connected::proxy(true)` is passed and the scheme is `https`.
+
 # 0.1.16 (2025-07-22)
 
 - Add `impl Clone` for `proxy::Tunnel` service.
