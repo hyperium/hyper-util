@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["legacy","proxy"]};
+window.SIDEBAR_ITEMS = {"mod":["legacy","pool","proxy"]};

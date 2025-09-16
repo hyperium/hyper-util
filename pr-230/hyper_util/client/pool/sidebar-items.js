@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["cache","map","negotiate"],"struct":["Singleton"]};
