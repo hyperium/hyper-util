@@ -45,7 +45,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
 
       - name: Install Rust toolchain
-      - uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@nightly
 
       - name: Build rustdoc
         run: cargo rustdoc --features full -- --cfg docsrs
