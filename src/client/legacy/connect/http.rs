@@ -4,7 +4,7 @@ use std::future::Future;
 use std::io;
 use std::marker::PhantomData;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::pin::Pin;
+use std::pin::{pin, Pin};
 use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
@@ -954,14 +954,11 @@ impl ConnectingTcp<'_> {
         match self.fallback {
             None => self.preferred.connect(self.config).await,
             Some(mut fallback) => {
-                let preferred_fut = self.preferred.connect(self.config);
-                futures_util::pin_mut!(preferred_fut);
+                let preferred_fut = pin!(self.preferred.connect(self.config));
 
-                let fallback_fut = fallback.remote.connect(self.config);
-                futures_util::pin_mut!(fallback_fut);
+                let fallback_fut = pin!(fallback.remote.connect(self.config));
 
-                let fallback_delay = fallback.delay;
-                futures_util::pin_mut!(fallback_delay);
+                let fallback_delay = pin!(fallback.delay);
 
                 let (result, future) =
                     match futures_util::future::select(preferred_fut, fallback_delay).await {
