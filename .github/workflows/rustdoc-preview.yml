@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           # Check out the PR's branch
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: refs/pull/${{ github.event.issue.number }}/head
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -67,7 +67,7 @@ jobs:
             const pr_number = context.issue.number;
             const repo = context.repo.repo;
             const owner = context.repo.owner;
-            const url = `https://${owner}.github.io/${repo}/pr-${pr_number}/`;
+            const url = `https://${owner}.github.io/${repo}/pr-${pr_number}/hyper_util/`;
             github.rest.issues.createComment({
               issue_number: pr_number,
               owner,
