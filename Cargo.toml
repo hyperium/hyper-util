@@ -33,6 +33,7 @@ pin-project-lite = "0.2.4"
 socket2 = { version = ">=0.5.9, <0.7", optional = true, features = ["all"] }
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 tokio = { version = "1", optional = true, default-features = false  }
+tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }
 
 [dev-dependencies]
@@ -76,7 +77,7 @@ full = [
 
 client = ["hyper/client", "tokio/net", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
 client-legacy = ["client", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util"]
-client-pool = ["dep:futures-util"]
+client-pool = ["dep:futures-util", "dep:tower-layer"]
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
 client-proxy-system = ["dep:system-configuration", "dep:windows-registry"]
 
