@@ -785,7 +785,7 @@ impl<T: Poolable + 'static, K: Key> IdleTask<T, K> {
     async fn run(self) {
         use futures_util::future;
 
-        let mut sleep = self.timer.sleep_until(Instant::now() + self.duration);
+        let mut sleep = self.timer.sleep(self.duration);
         let mut on_pool_drop = self.pool_drop_notifier;
         loop {
             match future::select(&mut on_pool_drop, &mut sleep).await {
@@ -801,8 +801,7 @@ impl<T: Poolable + 'static, K: Key> IdleTask<T, K> {
                         }
                     }
 
-                    let deadline = Instant::now() + self.duration;
-                    self.timer.reset(&mut sleep, deadline);
+                    sleep = self.timer.sleep(self.duration);
                 }
             }
         }
