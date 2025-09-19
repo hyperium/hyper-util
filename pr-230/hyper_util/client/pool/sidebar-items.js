@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["cache","map","negotiate"],"struct":["Singleton"]};
+window.SIDEBAR_ITEMS = {"mod":["cache","map","negotiate","singleton"]};

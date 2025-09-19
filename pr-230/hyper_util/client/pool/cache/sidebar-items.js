@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["builder"],"struct":["Builder","Cache"]};
+window.SIDEBAR_ITEMS = {"fn":["builder"],"struct":["Builder","Cache","Cached"]};
