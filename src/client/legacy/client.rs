@@ -1486,6 +1486,21 @@ impl Builder {
         self
     }
 
+    /// Sets the maximum number of HTTP2 concurrent streams.
+    ///
+    /// See the documentation of [`h2::client::Builder::max_concurrent_streams`] for more
+    /// details.
+    ///
+    /// The default value is determined by the `h2` crate.
+    ///
+    /// [`h2::client::Builder::max_concurrent_streams`]: https://docs.rs/h2/client/struct.Builder.html#method.max_concurrent_streams
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+    pub fn http2_max_concurrent_streams(&mut self, max: u32) -> &mut Self {
+        self.h2_builder.max_concurrent_streams(max);
+        self
+    }
+
     /// Sets the maximum number of HTTP2 concurrent locally reset streams.
     ///
     /// See the documentation of [`h2::client::Builder::max_concurrent_reset_streams`] for more
