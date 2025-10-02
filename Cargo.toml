@@ -34,6 +34,7 @@ socket2 = { version = ">=0.5.9, <0.7", optional = true, features = ["all"] }
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 tokio = { version = "1", optional = true, default-features = false  }
 tower-service = { version = "0.3", optional = true }
+scopeguard = "1.2.0"
 
 [dev-dependencies]
 hyper = { version = "1.4.0", features = ["full"] }

@@ -25,6 +25,7 @@ use super::connect::HttpConnector;
 use super::connect::{Alpn, Connect, Connected, Connection};
 use super::pool::{self, Ver};
 
+use crate::client::legacy::pool::{EventHandler, PoolEvent};
 use crate::common::future::poll_fn;
 use crate::common::{lazy as hyper_lazy, timer, Exec, Lazy, SyncWrapper};
 
@@ -62,7 +63,7 @@ pub struct Error {
 }
 
 #[derive(Debug)]
-enum ErrorKind {
+pub enum ErrorKind {
     Canceled,
     ChannelClosed,
     Connect,
@@ -89,8 +90,9 @@ macro_rules! e {
     };
 }
 
-// We might change this... :shrug:
-type PoolKey = (http::uri::Scheme, http::uri::Authority);
+/// PoolKey is a tuple of Scheme and Authority of Uri, used to
+/// identify a connection pool for a specific destination.
+pub type PoolKey = (http::uri::Scheme, http::uri::Authority);
 
 enum TrySendError<B> {
     Retryable {
@@ -512,11 +514,49 @@ where
                     return Either::Right(future::err(canceled));
                 }
             };
+
+            let on_event_error = pool.on_event.clone();
+            let pool_key_cloned = pool_key.clone();
             Either::Left(
                 connector
                     .connect(super::connect::sealed::Internal, dst)
+                    .map_err(move |err| {
+                        let err_box: Box<dyn StdError + Send + Sync> = err.into();
+                        let mut source_err: Option<&dyn StdError> = Some(err_box.as_ref());
+                        let (mut io_error_kind, mut elapsed_error) = (None, false);
+
+                        while let Some(current_err) = source_err {
+                            use std::io;
+                            if let Some(io_err) = current_err.downcast_ref::<io::Error>()
+                            {
+                                io_error_kind = Some(io_err.kind());
+                            } else if current_err.is::<tokio::time::error::Elapsed>() {
+                                elapsed_error = true;
+                            }
+
+                            source_err = current_err.source();
+                        }
+
+                        if let Some(ref handler) = on_event_error {
+                            let is_timeout =
+                                elapsed_error || matches!(io_error_kind, Some(std::io::ErrorKind::TimedOut));
+                        if is_timeout {
+                            handler.notify(PoolEvent::ConnectionTimeout, &[&pool_key]);
+                        } else {
+                            handler.notify(PoolEvent::ConnectionError, &[&pool_key]);
+                        }
+                    }
+                        // If the connection failed, we need to notify the event connection error.
+
+                        e!(Connect, err_box)
+                    })
                     .map_err(|src| e!(Connect, src))
                     .and_then(move |io| {
+                        // increment the total connection count for this pool key
+                        if let Some(ref handler) = pool.on_event {
+                            handler.notify(PoolEvent::NewConnection, &[&pool_key_cloned]);
+                        }
+
                         let connected = io.connected();
                         // If ALPN is h2 and we aren't http2_only already,
                         // then we need to convert our pool checkout into
@@ -542,6 +582,13 @@ where
                         let is_h2 = is_ver_h2 || connected.alpn == Alpn::H2;
 
                         Either::Left(Box::pin(async move {
+                            use scopeguard::{guard, ScopeGuard};
+                            let guard = guard((), |_| {
+                                // increment the destroy connection count for this pool key (if still armed)
+                                if let Some(ref handler) = pool.on_event {
+                                    handler.notify(PoolEvent::ConnectionError, &[&pool_key_cloned]);
+                                }
+                            });
                             let tx = if is_h2 {
                                 #[cfg(feature = "http2")] {
                                     let (mut tx, conn) =
@@ -652,6 +699,9 @@ where
                                     panic!("http1 feature is not enabled");
                                 }
                             };
+
+                            // “defuse” the guard...
+                            _ = ScopeGuard::into_inner(guard);
 
                             Ok(pool.pooled(
                                 connecting,
@@ -1021,6 +1071,7 @@ pub struct Builder {
     h2_builder: hyper::client::conn::http2::Builder<Exec>,
     pool_config: pool::Config,
     pool_timer: Option<timer::Timer>,
+    event_handler: Option<EventHandler>,
 }
 
 impl Builder {
@@ -1046,6 +1097,7 @@ impl Builder {
                 max_idle_per_host: usize::MAX,
             },
             pool_timer: None,
+            event_handler: None,
         }
     }
     /// Set an optional timeout for idle sockets being kept-alive.
@@ -1554,6 +1606,13 @@ impl Builder {
         self
     }
 
+    /// Set a handler to be used for pool event notifications.
+    ///
+    pub fn pool_event_handler(&mut self, on_event: EventHandler) -> &mut Self {
+        self.event_handler = Some(on_event);
+        self
+    }
+
     /// Set whether to retry requests that get disrupted before ever starting
     /// to write.
     ///
@@ -1606,6 +1665,7 @@ impl Builder {
     {
         let exec = self.exec.clone();
         let timer = self.pool_timer.clone();
+        let on_event = self.event_handler.clone();
         Client {
             config: self.client_config,
             exec: exec.clone(),
@@ -1614,7 +1674,7 @@ impl Builder {
             #[cfg(feature = "http2")]
             h2_builder: self.h2_builder.clone(),
             connector,
-            pool: pool::Pool::new(self.pool_config, exec, timer),
+            pool: pool::Pool::new(self.pool_config, exec, timer, on_event),
         }
     }
 }
