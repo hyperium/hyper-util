@@ -972,6 +972,7 @@ mod tests {
             },
             TokioExecutor::new(),
             Option::<timer::Timer>::None,
+            None,
         );
         pool.no_timer();
         pool
@@ -1070,6 +1071,7 @@ mod tests {
             },
             TokioExecutor::new(),
             Some(TokioTimer::new()),
+            None
         );
 
         let key = host_key("foo");
