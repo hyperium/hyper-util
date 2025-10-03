@@ -249,7 +249,7 @@ where
         let uri = req.uri().clone();
 
         loop {
-            req = match self.try_send_request(req, pool_key.clone()).await {
+            req = match self.try_send_request(req, &pool_key).await {
                 Ok(resp) => return Ok(resp),
                 Err(TrySendError::Nope(err)) => return Err(err),
                 Err(TrySendError::Retryable {
@@ -277,7 +277,7 @@ where
     async fn try_send_request(
         &self,
         mut req: Request<B>,
-        pool_key: PoolKey,
+        pool_key: &PoolKey,
     ) -> Result<Response<hyper::body::Incoming>, TrySendError<B>> {
         let mut pooled = self
             .connection_for(pool_key)
@@ -370,10 +370,10 @@ where
 
     async fn connection_for(
         &self,
-        pool_key: PoolKey,
+        pool_key: &PoolKey,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, Error> {
         loop {
-            match self.one_connection_for(pool_key.clone()).await {
+            match self.one_connection_for(pool_key).await {
                 Ok(pooled) => return Ok(pooled),
                 Err(ClientConnectError::Normal(err)) => return Err(err),
                 Err(ClientConnectError::CheckoutIsClosed(reason)) => {
@@ -393,7 +393,7 @@ where
 
     async fn one_connection_for(
         &self,
-        pool_key: PoolKey,
+        pool_key: &PoolKey,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
@@ -486,7 +486,7 @@ where
     #[cfg(any(feature = "http1", feature = "http2"))]
     fn connect_to(
         &self,
-        pool_key: PoolKey,
+        pool_key: &PoolKey,
     ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin
     {
         let executor = self.exec.clone();
@@ -498,7 +498,8 @@ where
         let ver = self.config.ver;
         let is_ver_h2 = ver == Ver::Http2;
         let connector = self.connector.clone();
-        let dst = domain_as_uri(pool_key.clone());
+        let dst = domain_as_uri(pool_key);
+        let pool_key = pool_key.clone();
         hyper_lazy(move || {
             // Try to take a "connecting lock".
             //
@@ -701,7 +702,7 @@ where
                             };
 
                             // “defuse” the guard...
-                            _ = ScopeGuard::into_inner(guard);
+                            ScopeGuard::into_inner(guard);
 
                             Ok(pool.pooled(
                                 connecting,
@@ -1005,10 +1006,10 @@ fn extract_domain(uri: &mut Uri, is_http_connect: bool) -> Result<PoolKey, Error
     }
 }
 
-fn domain_as_uri((scheme, auth): PoolKey) -> Uri {
+fn domain_as_uri((scheme, auth): &PoolKey) -> Uri {
     http::uri::Builder::new()
-        .scheme(scheme)
-        .authority(auth)
+        .scheme(scheme.clone())
+        .authority(auth.clone())
         .path_and_query("/")
         .build()
         .expect("domain is valid Uri")
