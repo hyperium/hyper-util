@@ -982,10 +982,10 @@ fn authority_form(uri: &mut Uri) {
 }
 
 fn extract_domain(uri: &mut Uri, is_http_connect: bool) -> Result<PoolKey, Error> {
-    let uri_clone = uri.clone();
-    match (uri_clone.scheme(), uri_clone.authority()) {
+    match (uri.scheme(), uri.authority()) {
         (Some(scheme), Some(auth)) => Ok((scheme.clone(), auth.clone())),
         (None, Some(auth)) if is_http_connect => {
+            let auth = auth.clone();
             let scheme = match auth.port_u16() {
                 Some(443) => {
                     set_scheme(uri, Scheme::HTTPS);
@@ -996,7 +996,7 @@ fn extract_domain(uri: &mut Uri, is_http_connect: bool) -> Result<PoolKey, Error
                     Scheme::HTTP
                 }
             };
-            Ok((scheme, auth.clone()))
+            Ok((scheme, auth))
         }
         _ => {
             debug!("Client requires absolute-form URIs, received: {:?}", uri);
