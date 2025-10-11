@@ -302,7 +302,7 @@ where
                     let hostname = uri.host().expect("authority implies host");
                     if let Some(port) = get_non_default_port(&uri) {
                         let s = format!("{hostname}:{port}");
-                        HeaderValue::from_str(&s)
+                        HeaderValue::from_maybe_shared(bytes::Bytes::from(s))
                     } else {
                         HeaderValue::from_str(hostname)
                     }
