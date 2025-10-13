@@ -119,4 +119,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo rustdoc -- --cfg docsrs -D rustdoc::broken-intra-doc-links
+      - run: cargo rustdoc -- --cfg docsrs -D rustdoc::broken_intra_doc_links
