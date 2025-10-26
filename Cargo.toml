@@ -48,10 +48,10 @@ pretty_env_logger = "0.5"
 pnet_datalink = "0.35.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-system-configuration = { version = "0.6.1", optional = true }
+system-configuration = { version = ">=0.5, <0.7", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-registry = { version = "0.6", optional = true }
+windows-registry = { version = ">=0.3, <0.7", optional = true }
 
 [features]
 default = []
