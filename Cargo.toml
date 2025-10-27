@@ -42,6 +42,7 @@ futures-util = { version = "0.3.16", default-features = false, features = ["allo
 http-body-util = "0.1.0"
 tokio = { version = "1", features = ["macros", "test-util", "signal"] }
 tokio-test = "0.4"
+tower-test = "0.4"
 pretty_env_logger = "0.5"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
@@ -60,6 +61,7 @@ default = []
 full = [
     "client",
     "client-legacy",
+    "client-pool",
     "client-proxy",
     "client-proxy-system",
     "server",
@@ -74,6 +76,7 @@ full = [
 
 client = ["hyper/client", "tokio/net", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
 client-legacy = ["client", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util"]
+client-pool = []
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
 client-proxy-system = ["dep:system-configuration", "dep:windows-registry"]
 
