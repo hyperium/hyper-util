@@ -1,3 +1,8 @@
+# 0.1.18 (2025-11-13)
+
+- Fix `rt::TokioTimer` to support Tokio's paused time.
+- Fix `client::proxy::match::Matcher` to parse auth without passwords.
+
 # 0.1.17 (2025-09-15)
 
 - Fix `legacy::Client` to allow absolute-form URIs when `Connected::proxy(true)` is passed and the scheme is `https`.
