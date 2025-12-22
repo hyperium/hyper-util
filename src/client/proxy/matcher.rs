@@ -515,7 +515,10 @@ impl DomainMatcher {
     fn contains(&self, domain: &str) -> bool {
         let domain_len = domain.len();
         for d in &self.0 {
-            if d == domain || d.strip_prefix('.').is_some_and(|s| s.eq_ignore_ascii_case(domain)) {
+            if d == domain
+                || d.strip_prefix('.')
+                    .map_or(false, |s| s.eq_ignore_ascii_case(domain))
+            {
                 return true;
             } else if domain.ends_with(d) {
                 if d.starts_with('.') {
@@ -885,8 +888,14 @@ mod tests {
         };
 
         // should bypass proxy (case insensitive match)
-        assert!(p.intercept(&"http://example.com".parse().unwrap()).is_none());
-        assert!(p.intercept(&"http://EXAMPLE.COM".parse().unwrap()).is_none());
-        assert!(p.intercept(&"http://Example.com".parse().unwrap()).is_none());
+        assert!(p
+            .intercept(&"http://example.com".parse().unwrap())
+            .is_none());
+        assert!(p
+            .intercept(&"http://EXAMPLE.COM".parse().unwrap())
+            .is_none());
+        assert!(p
+            .intercept(&"http://Example.com".parse().unwrap())
+            .is_none());
     }
 }
