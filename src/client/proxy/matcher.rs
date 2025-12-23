@@ -515,12 +515,15 @@ impl DomainMatcher {
     fn contains(&self, domain: &str) -> bool {
         let domain_len = domain.len();
         for d in &self.0 {
-            if d == domain
+            if d.eq_ignore_ascii_case(domain)
                 || d.strip_prefix('.')
                     .map_or(false, |s| s.eq_ignore_ascii_case(domain))
             {
                 return true;
-            } else if domain.ends_with(d) {
+            } else if domain
+                .get(domain_len.saturating_sub(d.len())..)
+                .map_or(false, |s| s.eq_ignore_ascii_case(d))
+            {
                 if d.starts_with('.') {
                     // If the first character of d is a dot, that means the first character of domain
                     // must also be a dot, so we are looking at a subdomain of d and that matches
@@ -701,13 +704,19 @@ mod tests {
 
         // domains match with leading `.`
         assert!(matcher.contains("foo.bar"));
+        assert!(matcher.contains("FOO.BAR"));
+
         // subdomains match with leading `.`
         assert!(matcher.contains("www.foo.bar"));
+        assert!(matcher.contains("WWW.FOO.BAR"));
 
         // domains match with no leading `.`
         assert!(matcher.contains("bar.foo"));
+        assert!(matcher.contains("Bar.foo"));
+
         // subdomains match with no leading `.`
         assert!(matcher.contains("www.bar.foo"));
+        assert!(matcher.contains("WWW.BAR.FOO"));
 
         // non-subdomain string prefixes don't match
         assert!(!matcher.contains("notfoo.bar"));
@@ -878,6 +887,10 @@ mod tests {
         assert!(matcher.contains("foo.bar"));
         assert!(matcher.contains("FOO.BAR"));
         assert!(matcher.contains("Foo.Bar"));
+
+        assert!(matcher.contains("www.foo.bar"));
+        assert!(matcher.contains("WWW.FOO.BAR"));
+        assert!(matcher.contains("Www.Foo.Bar"));
     }
 
     #[test]
@@ -896,6 +909,17 @@ mod tests {
             .is_none());
         assert!(p
             .intercept(&"http://Example.com".parse().unwrap())
+            .is_none());
+
+        // subdomain should bypass proxy (case insensitive match)
+        assert!(p
+            .intercept(&"http://www.example.com".parse().unwrap())
+            .is_none());
+        assert!(p
+            .intercept(&"http://WWW.EXAMPLE.COM".parse().unwrap())
+            .is_none());
+        assert!(p
+            .intercept(&"http://Www.Example.Com".parse().unwrap())
             .is_none());
     }
 }
