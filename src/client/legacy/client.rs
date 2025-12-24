@@ -14,7 +14,7 @@ use std::time::Duration;
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::uri::Scheme;
 use hyper::client::conn::TrySendError as ConnTrySendError;
-use hyper::header::{HeaderValue, HOST};
+use hyper::header::{HeaderValue, HOST, PROXY_AUTHORIZATION};
 use hyper::rt::Timer;
 use hyper::{body::Body, Method, Request, Response, Uri, Version};
 use tracing::{debug, trace, warn};
@@ -315,6 +315,11 @@ where
                 authority_form(req.uri_mut());
             } else if pooled.conn_info.is_proxied {
                 absolute_form(req.uri_mut());
+                if let Some(proxy_auth) = &pooled.conn_info.proxy_basic_auth {
+                    req.headers_mut()
+                        .entry(PROXY_AUTHORIZATION)
+                        .or_insert_with(|| proxy_auth.clone());
+                }
             } else {
                 origin_form(req.uri_mut());
             }

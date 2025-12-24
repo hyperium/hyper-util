@@ -70,7 +70,7 @@ use std::{
     },
 };
 
-use ::http::Extensions;
+use ::http::{Extensions, HeaderValue};
 
 #[cfg(feature = "tokio")]
 pub use self::http::{HttpConnector, HttpInfo};
@@ -101,6 +101,7 @@ pub trait Connection {
 pub struct Connected {
     pub(super) alpn: Alpn,
     pub(super) is_proxied: bool,
+    pub(crate) proxy_basic_auth: Option<HeaderValue>,
     pub(super) extra: Option<Extra>,
     pub(super) poisoned: PoisonPill,
 }
@@ -151,6 +152,7 @@ impl Connected {
         Connected {
             alpn: Alpn::None,
             is_proxied: false,
+            proxy_basic_auth: None,
             extra: None,
             poisoned: PoisonPill::healthy(),
         }
@@ -182,6 +184,17 @@ impl Connected {
     /// Determines if the connected transport is to an HTTP proxy.
     pub fn is_proxied(&self) -> bool {
         self.is_proxied
+    }
+
+    /// Set the Proxy-Authorization header value for HTTP Proxy authentication.
+    pub fn proxy_basic_auth(mut self, auth: HeaderValue) -> Connected {
+        self.proxy_basic_auth = Some(auth);
+        self
+    }
+
+    /// Get the Proxy-Authorization header value for HTTP Proxy authentication.
+    pub fn get_proxy_basic_auth(&self) -> Option<&HeaderValue> {
+        self.proxy_basic_auth.as_ref()
     }
 
     /// Set extra connection information to be set in the extensions of every `Response`.
@@ -228,6 +241,7 @@ impl Connected {
         Connected {
             alpn: self.alpn,
             is_proxied: self.is_proxied,
+            proxy_basic_auth: self.proxy_basic_auth.clone(),
             extra: self.extra.clone(),
             poisoned: self.poisoned.clone(),
         }
