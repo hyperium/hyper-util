@@ -101,7 +101,7 @@ pub trait Connection {
 pub struct Connected {
     pub(super) alpn: Alpn,
     pub(super) is_proxied: bool,
-    pub(crate) proxy_basic_auth: Option<HeaderValue>,
+    pub(super) proxy_basic_auth: Option<HeaderValue>,
     pub(super) extra: Option<Extra>,
     pub(super) poisoned: PoisonPill,
 }
