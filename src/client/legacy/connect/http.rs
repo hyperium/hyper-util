@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use futures_core::ready;
 use futures_util::future::Either;
+use futures_util::stream::{FuturesUnordered, StreamExt as _};
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
 use socket2::TcpKeepalive;
@@ -91,6 +92,12 @@ struct Config {
     interface: Option<std::ffi::CString>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     tcp_user_timeout: Option<Duration>,
+    /// RFC 8305: Delay between staggered connection attempts.
+    /// When Some(_), enables RFC 8305 mode. When None (default), uses RFC 6555 mode.
+    connection_attempt_delay: Option<Duration>,
+    /// RFC 8305: Number of preferred family addresses before interleaving.
+    /// Clamped to 0..=8 to prevent fallback family starvation.
+    first_address_family_count: u8,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -252,6 +259,8 @@ impl<R> HttpConnector<R> {
                 interface: None,
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: None,
+                connection_attempt_delay: None,
+                first_address_family_count: 1,
             }),
             resolver,
         }
@@ -361,9 +370,51 @@ impl<R> HttpConnector<R> {
     /// Default is 300 milliseconds.
     ///
     /// [RFC 6555]: https://tools.ietf.org/html/rfc6555
+    #[deprecated(
+        since = "0.1.20",
+        note = "Use set_connection_attempt_delay for Happy Eyeballs v2 (RFC 8305) support"
+    )]
     #[inline]
     pub fn set_happy_eyeballs_timeout(&mut self, dur: Option<Duration>) {
         self.config_mut().happy_eyeballs_timeout = dur;
+    }
+
+    /// Set the delay between connection attempts for [RFC 8305 (Happy Eyeballs v2)][RFC 8305].
+    ///
+    /// When set to `Some(duration)`, enables RFC 8305 mode:
+    /// - Addresses are interleaved by family (IPv6, IPv4, IPv6, IPv4, ...)
+    /// - New connection attempts start every `duration`
+    /// - Multiple connections race in parallel
+    ///
+    /// When `None` (default), uses RFC 6555 behavior with `happy_eyeballs_timeout`.
+    ///
+    /// Recommended value is `Some(Duration::from_millis(250))` per RFC 8305.
+    /// Values below 10ms are clamped to 10ms per RFC 8305 Section 5.
+    ///
+    /// [RFC 8305]: https://tools.ietf.org/html/rfc8305
+    #[inline]
+    pub fn set_connection_attempt_delay(&mut self, dur: Option<Duration>) {
+        self.config_mut().connection_attempt_delay = dur.map(|d| d.max(Duration::from_millis(10)));
+    }
+
+    /// Set the number of addresses from the preferred family to try before interleaving.
+    ///
+    /// This controls how many addresses from the preferred family (determined by
+    /// the first resolved address) are attempted before interleaving with the
+    /// fallback family.
+    ///
+    /// - `1` (default): `[v6_1, v4_1, v6_2, v4_2, ...]`
+    /// - `2`: `[v6_1, v6_2, v4_1, v6_3, v4_2, ...]`
+    /// - `0`: Immediately interleave starting with fallback family
+    ///
+    /// Values above 8 are clamped to 8 to prevent fallback family starvation.
+    ///
+    /// Only takes effect when RFC 8305 mode is enabled via [`set_connection_attempt_delay`].
+    ///
+    /// [`set_connection_attempt_delay`]: Self::set_connection_attempt_delay
+    #[inline]
+    pub fn set_first_address_family_count(&mut self, count: u8) {
+        self.config_mut().first_address_family_count = count.min(8);
     }
 
     /// Set that all socket have `SO_REUSEADDR` set to the supplied value `reuse_address`.
@@ -703,26 +754,38 @@ impl StdError for ConnectError {
     }
 }
 
-struct ConnectingTcp<'a> {
-    preferred: ConnectingTcpRemote,
-    fallback: Option<ConnectingTcpFallback>,
-    config: &'a Config,
+/// Connection state machine that supports both RFC 6555 and RFC 8305 modes.
+enum ConnectingTcp<'a> {
+    /// RFC 6555 mode: preferred/fallback with single delay
+    V1 {
+        preferred: ConnectingTcpRemote,
+        fallback: Option<ConnectingTcpFallback>,
+        config: &'a Config,
+    },
+    /// RFC 8305 mode: interleaved addresses with staggered attempts
+    V2(ConnectingTcpV2<'a>),
 }
 
 impl<'a> ConnectingTcp<'a> {
     fn new(remote_addrs: dns::SocketAddrs, config: &'a Config) -> Self {
+        // Use RFC 8305 mode if connection_attempt_delay is set
+        if config.connection_attempt_delay.is_some() {
+            return ConnectingTcp::V2(ConnectingTcpV2::new(remote_addrs, config));
+        }
+
+        // Otherwise use RFC 6555 mode (unchanged behavior)
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
             let (preferred_addrs, fallback_addrs) = remote_addrs
                 .split_by_preference(config.local_address_ipv4, config.local_address_ipv6);
             if fallback_addrs.is_empty() {
-                return ConnectingTcp {
+                return ConnectingTcp::V1 {
                     preferred: ConnectingTcpRemote::new(preferred_addrs, config.connect_timeout),
                     fallback: None,
                     config,
                 };
             }
 
-            ConnectingTcp {
+            ConnectingTcp::V1 {
                 preferred: ConnectingTcpRemote::new(preferred_addrs, config.connect_timeout),
                 fallback: Some(ConnectingTcpFallback {
                     delay: tokio::time::sleep(fallback_timeout),
@@ -731,12 +794,156 @@ impl<'a> ConnectingTcp<'a> {
                 config,
             }
         } else {
-            ConnectingTcp {
+            ConnectingTcp::V1 {
                 preferred: ConnectingTcpRemote::new(remote_addrs, config.connect_timeout),
                 fallback: None,
                 config,
             }
         }
+    }
+}
+
+/// RFC 8305 (Happy Eyeballs v2) staggered connection state machine.
+struct ConnectingTcpV2<'a> {
+    addresses: dns::InterleavedAddrs,
+    total_addrs: usize,
+    config: &'a Config,
+}
+
+type BoxTcpConnecting = Pin<Box<dyn Future<Output = Result<TcpStream, ConnectError>> + Send>>;
+
+impl<'a> ConnectingTcpV2<'a> {
+    fn new(remote_addrs: dns::SocketAddrs, config: &'a Config) -> Self {
+        let addresses =
+            remote_addrs.interleave_by_family(config.first_address_family_count as usize);
+        let total_addrs = addresses.total();
+
+        Self {
+            addresses,
+            total_addrs,
+            config,
+        }
+    }
+
+    async fn connect(mut self) -> Result<TcpStream, ConnectError> {
+        if self.total_addrs == 0 {
+            return Err(ConnectError::new(
+                "tcp connect error",
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "no addresses to connect to",
+                ),
+            ));
+        }
+
+        let connect_timeout = self
+            .config
+            .connect_timeout
+            .and_then(|t| t.checked_div(self.total_addrs as u32));
+
+        // RFC 8305 recommends 250ms Connection Attempt Delay
+        let stagger_delay = self
+            .config
+            .connection_attempt_delay
+            .unwrap_or(Duration::from_millis(250));
+
+        let mut first_error = None;
+        let mut active = FuturesUnordered::new();
+
+        // Start first connection
+        active.push(self.start_next(connect_timeout)?);
+
+        loop {
+            // Handle empty active list (all connections failed)
+            if active.is_empty() {
+                if self.addresses.len() == 0 {
+                    return Err(first_error.unwrap_or_else(|| {
+                        ConnectError::new(
+                            "tcp connect error",
+                            std::io::Error::new(
+                                std::io::ErrorKind::NotConnected,
+                                "Network unreachable",
+                            ),
+                        )
+                    }));
+                }
+                match self.start_next(connect_timeout) {
+                    Ok(conn) => active.push(conn),
+                    Err(e) => {
+                        if first_error.is_none() {
+                            first_error = Some(e);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // If there are more addresses to try, race connections against stagger timer
+            if self.addresses.len() > 0 {
+                let stagger_timer = tokio::time::sleep(stagger_delay);
+                futures_util::pin_mut!(stagger_timer);
+
+                match futures_util::future::select(active.next(), stagger_timer).await {
+                    Either::Left((Some(result), _timer)) => match result {
+                        Ok(stream) => return Ok(stream),
+                        Err(e) => {
+                            trace!("connection error: {:?}", e);
+                            if first_error.is_none() {
+                                first_error = Some(e);
+                            }
+                            continue;
+                        }
+                    },
+                    Either::Left((None, _timer)) => continue,
+                    Either::Right(((), _next)) => {
+                        match self.start_next(connect_timeout) {
+                            Ok(conn) => active.push(conn),
+                            Err(e) => {
+                                trace!("connection start error: {:?}", e);
+                                if first_error.is_none() {
+                                    first_error = Some(e);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+            } else {
+                // No more addresses to try, just wait for any connection to complete
+                match active.next().await {
+                    Some(Ok(stream)) => return Ok(stream),
+                    Some(Err(e)) => {
+                        trace!("connection error: {:?}", e);
+                        if first_error.is_none() {
+                            first_error = Some(e);
+                        }
+                        continue;
+                    }
+                    None => continue,
+                }
+            }
+        }
+    }
+
+    fn start_next(
+        &mut self,
+        connect_timeout: Option<Duration>,
+    ) -> Result<BoxTcpConnecting, ConnectError> {
+        let addr = self.addresses.next().ok_or_else(|| {
+            ConnectError::new(
+                "tcp connect error",
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "No more addresses"),
+            )
+        })?;
+
+        let attempted = self.total_addrs - self.addresses.len();
+        debug!(
+            "Happy Eyeballs v2: starting connection {}/{} to {}",
+            attempted, self.total_addrs, addr
+        );
+
+        let fut = connect(&addr, self.config, connect_timeout)?;
+        Ok(Box::pin(fut))
     }
 }
 
@@ -950,40 +1157,47 @@ fn connect(
 }
 
 impl ConnectingTcp<'_> {
-    async fn connect(mut self) -> Result<TcpStream, ConnectError> {
-        match self.fallback {
-            None => self.preferred.connect(self.config).await,
-            Some(mut fallback) => {
-                let preferred_fut = self.preferred.connect(self.config);
-                futures_util::pin_mut!(preferred_fut);
+    async fn connect(self) -> Result<TcpStream, ConnectError> {
+        match self {
+            ConnectingTcp::V1 {
+                mut preferred,
+                fallback,
+                config,
+            } => match fallback {
+                None => preferred.connect(config).await,
+                Some(mut fallback) => {
+                    let preferred_fut = preferred.connect(config);
+                    futures_util::pin_mut!(preferred_fut);
 
-                let fallback_fut = fallback.remote.connect(self.config);
-                futures_util::pin_mut!(fallback_fut);
+                    let fallback_fut = fallback.remote.connect(config);
+                    futures_util::pin_mut!(fallback_fut);
 
-                let fallback_delay = fallback.delay;
-                futures_util::pin_mut!(fallback_delay);
+                    let fallback_delay = fallback.delay;
+                    futures_util::pin_mut!(fallback_delay);
 
-                let (result, future) =
-                    match futures_util::future::select(preferred_fut, fallback_delay).await {
-                        Either::Left((result, _fallback_delay)) => {
-                            (result, Either::Right(fallback_fut))
-                        }
-                        Either::Right(((), preferred_fut)) => {
-                            // Delay is done, start polling both the preferred and the fallback
-                            futures_util::future::select(preferred_fut, fallback_fut)
-                                .await
-                                .factor_first()
-                        }
-                    };
+                    let (result, future) =
+                        match futures_util::future::select(preferred_fut, fallback_delay).await {
+                            Either::Left((result, _fallback_delay)) => {
+                                (result, Either::Right(fallback_fut))
+                            }
+                            Either::Right(((), preferred_fut)) => {
+                                // Delay is done, start polling both the preferred and the fallback
+                                futures_util::future::select(preferred_fut, fallback_fut)
+                                    .await
+                                    .factor_first()
+                            }
+                        };
 
-                if result.is_err() {
-                    // Fallback to the remaining future (could be preferred or fallback)
-                    // if we get an error
-                    future.await
-                } else {
-                    result
+                    if result.is_err() {
+                        // Fallback to the remaining future (could be preferred or fallback)
+                        // if we get an error
+                        future.await
+                    } else {
+                        result
+                    }
                 }
-            }
+            },
+            ConnectingTcp::V2(v2) => v2.connect().await,
         }
     }
 }
@@ -1007,7 +1221,7 @@ mod tests {
     use crate::client::legacy::connect::http::TcpKeepaliveConfig;
 
     use super::super::sealed::{Connect, ConnectSvc};
-    use super::{Config, ConnectError, HttpConnector};
+    use super::{dns, Config, ConnectError, ConnectingTcp, HttpConnector};
 
     use super::set_port;
 
@@ -1314,6 +1528,8 @@ mod tests {
                             target_os = "linux"
                         ))]
                         tcp_user_timeout: None,
+                        connection_attempt_delay: None,
+                        first_address_family_count: 1,
                     };
                     let connecting_tcp = ConnectingTcp::new(dns::SocketAddrs::new(addrs), &cfg);
                     let start = Instant::now();
@@ -1446,5 +1662,213 @@ mod tests {
         let mut addr = SocketAddr::from(([0, 0, 0, 0], 0));
         set_port(&mut addr, 443, false);
         assert_eq!(addr.port(), 443);
+    }
+
+    #[test]
+    fn test_connection_attempt_delay_default() {
+        let connector = HttpConnector::new();
+        let connecting_tcp = ConnectingTcp::new(dns::SocketAddrs::new(vec![]), &connector.config);
+        // Default should be Happy Eyeballs v1 for backward compatibility
+        assert!(matches!(connecting_tcp, ConnectingTcp::V1 { .. }));
+    }
+
+    #[test]
+    fn test_set_connection_attempt_delay() {
+        let mut connector = HttpConnector::new();
+        connector.set_connection_attempt_delay(Some(Duration::from_millis(250)));
+        let connecting_tcp = ConnectingTcp::new(dns::SocketAddrs::new(vec![]), &connector.config);
+        // Setting connection_attempt_delay should use Happy Eyeballs v2
+        assert!(matches!(connecting_tcp, ConnectingTcp::V2 { .. }));
+    }
+
+    #[test]
+    fn test_connection_attempt_delay_clamped_to_10ms() {
+        let mut connector = HttpConnector::new();
+
+        // Setting 0ms should clamp to 10ms per RFC 8305
+        connector.set_connection_attempt_delay(Some(Duration::from_millis(0)));
+        assert_eq!(
+            connector.config.connection_attempt_delay,
+            Some(Duration::from_millis(10))
+        );
+
+        // Setting 5ms should clamp to 10ms
+        connector.set_connection_attempt_delay(Some(Duration::from_millis(5)));
+        assert_eq!(
+            connector.config.connection_attempt_delay,
+            Some(Duration::from_millis(10))
+        );
+
+        // Setting 100ms should stay 100ms
+        connector.set_connection_attempt_delay(Some(Duration::from_millis(100)));
+        assert_eq!(
+            connector.config.connection_attempt_delay,
+            Some(Duration::from_millis(100))
+        );
+
+        // Setting None should stay None
+        connector.set_connection_attempt_delay(None);
+        assert!(connector.config.connection_attempt_delay.is_none());
+    }
+
+    #[test]
+    fn test_first_address_family_count_clamped() {
+        let mut connector = HttpConnector::new();
+
+        // Setting 100 should clamp to 8
+        connector.set_first_address_family_count(100);
+        assert_eq!(connector.config.first_address_family_count, 8);
+
+        // Setting 0 should stay 0
+        connector.set_first_address_family_count(0);
+        assert_eq!(connector.config.first_address_family_count, 0);
+    }
+
+    #[test]
+    fn test_deprecated_happy_eyeballs_timeout_still_works() {
+        let mut connector = HttpConnector::new();
+        #[allow(deprecated)]
+        connector.set_happy_eyeballs_timeout(Some(Duration::from_millis(500)));
+
+        // Should still set the value (deprecated but functional)
+        assert_eq!(
+            connector.config.happy_eyeballs_timeout,
+            Some(Duration::from_millis(500))
+        );
+    }
+
+    /// Returns true if Happy Eyeballs v2 tests can run on this system.
+    /// Checks: IPv4 localhost bindable, IPv6 available, RFC 6666 prefix routable.
+    fn can_run_happy_eyeballs_v2_test() -> bool {
+        use std::net::{SocketAddr, TcpListener, TcpStream};
+
+        // Check IPv4 localhost
+        if TcpListener::bind("127.0.0.1:0").is_err() {
+            eprintln!("IPv4 localhost not bindable");
+            return false;
+        }
+
+        // Check IPv6 localhost
+        if TcpListener::bind("[::1]:0").is_err() {
+            eprintln!("IPv6 localhost not bindable");
+            return false;
+        }
+
+        // Check RFC 6666 discard prefix is routable (connection should timeout, not "no route")
+        let addr: SocketAddr = "[100::1]:80".parse().unwrap();
+        match TcpStream::connect_timeout(&addr, Duration::from_millis(100)) {
+            Err(e) if e.kind() == io::ErrorKind::TimedOut => true, // Good - routable but blackholed
+            Err(e) if e.kind() == io::ErrorKind::NetworkUnreachable => {
+                // No route
+                eprintln!("No route to RFC 6666 discard prefix");
+                false
+            }
+            _ => true, // Other errors (connection refused, etc.) - assume routable
+        }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_happy_eyeballs_v2_staggered_fallback() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+        if !can_run_happy_eyeballs_v2_test() {
+            eprintln!(
+                "Skipping test_happy_eyeballs_v2_staggered_fallback: network requirements not met"
+            );
+            return;
+        }
+
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+
+        let _handle = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let _ = server.accept().await;
+        }));
+
+        let addrs = vec![
+            // Blackhole IPv6 address (will timeout)
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x100, 0, 0, 0, 0, 0, 0, 1)), port),
+            // IPv4 localhost (will succeed)
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+        ];
+
+        let mut http_connector = HttpConnector::new();
+        http_connector.set_connection_attempt_delay(Some(Duration::from_millis(250)));
+
+        let connecting =
+            super::ConnectingTcp::new(dns::SocketAddrs::new(addrs), &http_connector.config);
+        assert!(matches!(connecting, super::ConnectingTcp::V2 { .. }));
+        let result = connecting.connect().await;
+        dbg!(&result);
+        assert_eq!(
+            result.unwrap().peer_addr().unwrap(),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_happy_eyeballs_v2_immediate_success() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+        if !can_run_happy_eyeballs_v2_test() {
+            eprintln!(
+                "Skipping test_happy_eyeballs_v2_immediate_success: network requirements not met"
+            );
+            return;
+        }
+
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = server.local_addr().unwrap().port();
+        let _handle = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let _ = server.accept().await;
+        }));
+
+        // IPv4 first (will succeed immediately) - no stagger delay needed
+        let addrs = vec![
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x100, 0, 0, 0, 0, 0, 0, 1)), port),
+        ];
+
+        let mut http_connector = HttpConnector::new();
+        http_connector.set_connection_attempt_delay(Some(Duration::from_millis(250)));
+
+        let connecting =
+            super::ConnectingTcp::new(dns::SocketAddrs::new(addrs), &http_connector.config);
+        assert!(matches!(connecting, super::ConnectingTcp::V2 { .. }));
+        let result = connecting.connect().await;
+        assert_eq!(
+            result.unwrap().peer_addr().unwrap(),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_happy_eyeballs_v2_timeout() {
+        use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+
+        if !can_run_happy_eyeballs_v2_test() {
+            eprintln!("Skipping test_happy_eyeballs_v2_timeout: network requirements not met");
+            return;
+        }
+
+        // All blackhole IPv6 addresses (will timeout)
+        let addrs = vec![
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x100, 0, 0, 0, 0, 0, 0, 1)), 4242),
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x100, 0, 0, 0, 0, 0, 0, 2)), 4242),
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0x100, 0, 0, 0, 0, 0, 0, 3)), 4242),
+        ];
+
+        let mut http_connector = HttpConnector::new();
+        http_connector.set_connection_attempt_delay(Some(Duration::from_millis(250)));
+        http_connector.set_connect_timeout(Some(Duration::from_secs(2)));
+
+        let connecting =
+            super::ConnectingTcp::new(dns::SocketAddrs::new(addrs), &http_connector.config);
+        assert!(matches!(connecting, super::ConnectingTcp::V2 { .. }));
+        let result = connecting.connect().await;
+        assert_eq!(result.unwrap_err().msg, "tcp connect error");
     }
 }
