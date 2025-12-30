@@ -575,7 +575,7 @@ mod builder {
 #[cfg(feature = "client-proxy-system")]
 #[cfg(target_os = "macos")]
 mod mac {
-    use system_configuration::core_foundation::base::{CFType, TCFType, TCFTypeRef};
+    use system_configuration::core_foundation::base::CFType;
     use system_configuration::core_foundation::dictionary::CFDictionary;
     use system_configuration::core_foundation::number::CFNumber;
     use system_configuration::core_foundation::string::{CFString, CFStringRef};
@@ -586,7 +586,11 @@ mod mac {
     };
 
     pub(super) fn with_system(builder: &mut super::Builder) {
-        let store = SCDynamicStoreBuilder::new("").build();
+        let store = if let Some(store) = SCDynamicStoreBuilder::new("hyper-util").build() {
+            store
+        } else {
+            return;
+        };
 
         let proxies_map = if let Some(proxies_map) = store.get_proxies() {
             proxies_map
