@@ -13,6 +13,7 @@ use crate::common::future::poll_fn;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// todo
+/// Constructed using a FROM operator on a http1 builder only
 #[cfg(feature = "http1")]
 pub struct Http1Layer<B> {
     builder: hyper::client::conn::http1::Builder,
@@ -20,6 +21,7 @@ pub struct Http1Layer<B> {
 }
 
 /// todo
+/// Constructs a base layer with the default http1 builder
 #[cfg(feature = "http1")]
 pub fn http1<B>() -> Http1Layer<B> {
     Http1Layer {
@@ -45,7 +47,7 @@ impl<B> Clone for Http1Layer<B> {
     fn clone(&self) -> Self {
         Self {
             builder: self.builder.clone(),
-            _body: self._body.clone(),
+            _body: self._body,
         }
     }
 }
@@ -61,6 +63,7 @@ impl<B> From<hyper::client::conn::http1::Builder> for Http1Layer<B> {
 }
 
 /// todo
+///
 #[cfg(feature = "http1")]
 pub struct Http1Connect<M, B> {
     inner: M,
@@ -119,20 +122,33 @@ impl<M: Clone, B> Clone for Http1Connect<M, B> {
 }
 
 /// todo
+/// A http2 middleware for maintaining http2 connections 
+/// Typically constructed from a hyper::client::conn::http2::Builder<E>
 #[cfg(feature = "http2")]
-pub struct Http2Layer<B> {
+pub struct Http2Layer<B, E> {
+    builder: hyper::client::conn::http2::Builder<E>,
     _body: PhantomData<fn(B)>,
-}
+ }
 
 /// todo
+/// Constructs a layer with a default builder and a given executor.
 #[cfg(feature = "http2")]
-pub fn http2<B>() -> Http2Layer<B> {
-    Http2Layer { _body: PhantomData }
-}
+pub fn http2<B, E>(executor: E) -> Http2Layer<B, E>
+where
+    E: Clone,
+{
+    Http2Layer {
+        builder: hyper::client::conn::http2::Builder::new(executor),
+        _body: PhantomData,
+    }
+ }
 
 #[cfg(feature = "http2")]
-impl<M, B> tower_layer::Layer<M> for Http2Layer<B> {
-    type Service = Http2Connect<M, B>;
+impl<M, B, E> tower_layer::Layer<M> for Http2Layer<B, E>
+where
+    E: Clone,
+{
+    type Service = Http2Connect<M, B, E>;
     fn layer(&self, inner: M) -> Self::Service {
         Http2Connect {
             inner,
@@ -143,25 +159,38 @@ impl<M, B> tower_layer::Layer<M> for Http2Layer<B> {
 }
 
 #[cfg(feature = "http2")]
-impl<B> Clone for Http2Layer<B> {
+impl<B, E: Clone> Clone for Http2Layer<B, E> {
     fn clone(&self) -> Self {
         Self {
+            builder: self.builder.clone(),
             _body: self._body.clone(),
         }
     }
 }
 
+
+#[cfg(feature = "http2")]
+impl<B, E> From<hyper::client::conn::http2::Builder<E>> for Http2Layer<B, E> {
+    fn from(builder: hyper::client::conn::http2::Builder<E>) -> Self {
+        Self {
+            builder,
+            _body: PhantomData,
+        }
+     }
+ }
+
 /// todo
+/// The http2 connection type 
 #[cfg(feature = "http2")]
 #[derive(Debug)]
-pub struct Http2Connect<M, B> {
+pub struct Http2Connect<M, B, E> {
     inner: M,
-    builder: hyper::client::conn::http2::Builder<crate::rt::TokioExecutor>,
+    builder: hyper::client::conn::http2::Builder<E>,
     _body: PhantomData<fn(B)>,
 }
 
 #[cfg(feature = "http2")]
-impl<M, Dst, B> Service<Dst> for Http2Connect<M, B>
+impl<M, Dst, B, E> Service<Dst> for Http2Connect<M, B, E>
 where
     M: Service<Dst>,
     M::Future: Send + 'static,
@@ -170,6 +199,7 @@ where
     B: hyper::body::Body + Unpin + Send + 'static,
     B::Data: Send + 'static,
     B::Error: Into<BoxError>,
+    E: hyper::rt::bounds::Http2ClientConnExec<B, M::Response> + Unpin + Clone + Send + 'static,
 {
     type Response = Http2ClientService<B>;
     type Error = BoxError;
@@ -199,7 +229,7 @@ where
 }
 
 #[cfg(feature = "http2")]
-impl<M: Clone, B> Clone for Http2Connect<M, B> {
+impl<M: Clone, B, E: Clone> Clone for Http2Connect<M, B, E> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -218,7 +248,7 @@ pub struct Http1ClientService<B> {
 
 #[cfg(feature = "http1")]
 impl<B> Http1ClientService<B> {
-    /// todo
+    /// Constructs a new client HTTP/2 client service from a provided SendRequest.
     pub fn new(tx: hyper::client::conn::http1::SendRequest<B>) -> Self {
         Self { tx }
     }
@@ -248,7 +278,7 @@ where
     }
 }
 
-/// todo
+/// A thin adapter over hyper HTTP/2 client SendRequest.
 #[cfg(feature = "http2")]
 #[derive(Debug)]
 pub struct Http2ClientService<B> {
@@ -257,7 +287,7 @@ pub struct Http2ClientService<B> {
 
 #[cfg(feature = "http2")]
 impl<B> Http2ClientService<B> {
-    /// todo
+    /// Constructs a new client HTTP/2 client service from a provided SendRequest.
     pub fn new(tx: hyper::client::conn::http2::SendRequest<B>) -> Self {
         Self { tx }
     }
