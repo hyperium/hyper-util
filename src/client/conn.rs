@@ -1,4 +1,8 @@
-//! todo
+//! Tower layers and services for HTTP/1 and HTTP/2 client connections.
+//!
+//! This module provides Tower-compatible layers that wrap Hyper's low-level
+//! HTTP client connection types, making them easier to compose with other
+//! middleware and connection pooling strategies.
 
 use std::future::Future;
 use std::marker::PhantomData;
@@ -12,16 +16,39 @@ use crate::common::future::poll_fn;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-/// todo
-/// Constructed using a FROM operator on a http1 builder only
+/// A Tower [`Layer`](tower_layer::Layer) for creating HTTP/1 client connections.
+///
+/// This layer wraps a connection service (typically a TCP or TLS connector) and
+/// performs the HTTP/1 handshake, producing an [`Http1ClientService`] that can
+/// send requests.
+///
+/// Use [`http1()`] to create a layer with default settings, or construct from
+/// a [`hyper::client::conn::http1::Builder`] for custom configuration.
+///
+/// # Example
+///
+/// ```ignore
+/// use hyper_util::client::conn::http1;
+/// use hyper::{client::connect::HttpConnector, body::Bytes};
+/// use tower:: ServiceBuilder;
+/// use http_body_util::Empty;
+///
+/// let connector = HttpConnector::new();
+/// let layer: Http1Layer<Empty<Bytes>> = http1();
+/// let client = ServiceBuilder::new()
+///     .layer(layer)
+///     .service(connector);
+/// ```
 #[cfg(feature = "http1")]
 pub struct Http1Layer<B> {
     builder: hyper::client::conn::http1::Builder,
     _body: PhantomData<fn(B)>,
 }
 
-/// todo
-/// Constructs a base layer with the default http1 builder
+/// Creates an [`Http1Layer`] with default HTTP/1 settings.
+///
+/// For custom settings, construct an [`Http1Layer`] from a
+/// [`hyper::client::conn::http1::Builder`] using `.into()`.
 #[cfg(feature = "http1")]
 pub fn http1<B>() -> Http1Layer<B> {
     Http1Layer {
@@ -62,8 +89,11 @@ impl<B> From<hyper::client::conn::http1::Builder> for Http1Layer<B> {
     }
 }
 
-/// todo
+/// A Tower [`Service`] that establishes HTTP/1 connections.
 ///
+/// This service wraps an underlying connection service (e.g., TCP or TLS) and
+/// performs the HTTP/1 handshake when called. The resulting service can be used
+/// to send HTTP requests over the established connection.
 #[cfg(feature = "http1")]
 pub struct Http1Connect<M, B> {
     inner: M,
@@ -121,17 +151,39 @@ impl<M: Clone, B> Clone for Http1Connect<M, B> {
     }
 }
 
-/// todo
-/// A http2 middleware for maintaining http2 connections 
-/// Typically constructed from a hyper::client::conn::http2::Builder<E>
+/// A Tower [`Layer`](tower_layer::Layer) for creating HTTP/2 client connections.
+///
+/// This layer wraps a connection service (typically a TCP or TLS connector) and
+/// performs the HTTP/2 handshake, producing an [`Http2ClientService`] that can
+/// send requests.
+///
+/// Use [`http2()`] to create a layer with a specific executor, or construct from
+/// a [`hyper::client::conn::http2::Builder`] for custom configuration.
+///
+/// # Example
+///
+/// ```ignore
+/// use hyper_util::client::conn::http2;
+/// use hyper::{client::connect::HttpConnector, body::Bytes};
+/// use tower:: ServiceBuilder;
+/// use http_body_util::Empty;
+///
+/// let connector = HttpConnector::new();
+/// let layer: Http2Layer<Empty<Bytes>> = http2();
+/// let client = ServiceBuilder::new()
+///     .layer(layer)
+///     .service(connector);
+/// ```
 #[cfg(feature = "http2")]
 pub struct Http2Layer<B, E> {
     builder: hyper::client::conn::http2::Builder<E>,
     _body: PhantomData<fn(B)>,
- }
+}
 
-/// todo
-/// Constructs a layer with a default builder and a given executor.
+/// Creates an [`Http2Layer`] with default HTTP/1 settings.
+///
+/// For custom settings, construct an [`Http2Layer`] from a
+/// [`hyper::client::conn::http2::Builder`] using `.into()`.
 #[cfg(feature = "http2")]
 pub fn http2<B, E>(executor: E) -> Http2Layer<B, E>
 where
@@ -141,7 +193,7 @@ where
         builder: hyper::client::conn::http2::Builder::new(executor),
         _body: PhantomData,
     }
- }
+}
 
 #[cfg(feature = "http2")]
 impl<M, B, E> tower_layer::Layer<M> for Http2Layer<B, E>
@@ -168,7 +220,6 @@ impl<B, E: Clone> Clone for Http2Layer<B, E> {
     }
 }
 
-
 #[cfg(feature = "http2")]
 impl<B, E> From<hyper::client::conn::http2::Builder<E>> for Http2Layer<B, E> {
     fn from(builder: hyper::client::conn::http2::Builder<E>) -> Self {
@@ -176,11 +227,14 @@ impl<B, E> From<hyper::client::conn::http2::Builder<E>> for Http2Layer<B, E> {
             builder,
             _body: PhantomData,
         }
-     }
- }
+    }
+}
 
-/// todo
-/// The http2 connection type 
+/// A Tower [`Service`] that establishes HTTP/2 connections.
+///
+/// This service wraps an underlying connection service (e.g., TCP or TLS) and
+/// performs the HTTP/2 handshake when called.  The resulting service can be used
+/// to send HTTP requests over the established connection.
 #[cfg(feature = "http2")]
 #[derive(Debug)]
 pub struct Http2Connect<M, B, E> {
@@ -239,7 +293,14 @@ impl<M: Clone, B, E: Clone> Clone for Http2Connect<M, B, E> {
     }
 }
 
-/// A thin adapter over hyper HTTP/1 client SendRequest.
+/// A Tower [`Service`] that sends HTTP/1 requests over an established connection.
+///
+/// This is a thin wrapper around [`hyper::client::conn::http1::SendRequest`] that implements
+/// the Tower `Service` trait, making it composable with other Tower middleware.
+///
+/// The service maintains a single HTTP/1 connection and can be used to send multiple
+/// sequential requests.  For concurrent requests or connection pooling, wrap this service
+/// with appropriate middleware.
 #[cfg(feature = "http1")]
 #[derive(Debug)]
 pub struct Http1ClientService<B> {
@@ -248,7 +309,10 @@ pub struct Http1ClientService<B> {
 
 #[cfg(feature = "http1")]
 impl<B> Http1ClientService<B> {
-    /// Constructs a new client HTTP/2 client service from a provided SendRequest.
+    /// Constructs a new HTTP/1 client service from a Hyper `SendRequest`.
+    ///
+    /// Typically you won't call this directly; instead, use [`Http1Connect`] to
+    /// establish connections and produce this service.
     pub fn new(tx: hyper::client::conn::http1::SendRequest<B>) -> Self {
         Self { tx }
     }
@@ -278,7 +342,14 @@ where
     }
 }
 
-/// A thin adapter over hyper HTTP/2 client SendRequest.
+/// A Tower [`Service`] that sends HTTP/2 requests over an established connection.
+///
+/// This is a thin wrapper around [`hyper::client::conn::http2::SendRequest`] that implements
+/// the Tower `Service` trait, making it composable with other Tower middleware.
+///
+/// The service maintains a single HTTP/2 connection and supports multiplexing multiple
+/// concurrent requests over that connection. The service can be cloned to send requests
+/// concurrently, or used with the [`Singleton`](crate::client::pool::singleton::Singleton) pool service.
 #[cfg(feature = "http2")]
 #[derive(Debug)]
 pub struct Http2ClientService<B> {
@@ -287,7 +358,10 @@ pub struct Http2ClientService<B> {
 
 #[cfg(feature = "http2")]
 impl<B> Http2ClientService<B> {
-    /// Constructs a new client HTTP/2 client service from a provided SendRequest.
+    /// Constructs a new HTTP/2 client service from a Hyper `SendRequest`.
+    ///
+    /// Typically you won't call this directly; instead, use [`Http2Connect`] to
+    /// establish connections and produce this service.
     pub fn new(tx: hyper::client::conn::http2::SendRequest<B>) -> Self {
         Self { tx }
     }
