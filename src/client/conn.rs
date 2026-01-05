@@ -74,7 +74,7 @@ impl<B> Clone for Http1Layer<B> {
     fn clone(&self) -> Self {
         Self {
             builder: self.builder.clone(),
-            _body: self._body,
+            _body: self._body.clone(),
         }
     }
 }
