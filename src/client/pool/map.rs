@@ -48,7 +48,7 @@ where
 // impl Map
 
 impl Map<builder::StartHere, builder::StartHere> {
-    /// Create a [`Builder`] to configure a new `Map`.
+    /// Create a `Builder` to configure a new `Map`.
     pub fn builder<Dst>() -> builder::Builder<Dst, builder::WantsKeyer, builder::WantsServiceMaker>
     {
         builder::Builder::new()
