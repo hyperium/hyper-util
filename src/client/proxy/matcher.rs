@@ -575,7 +575,7 @@ mod builder {
 #[cfg(feature = "client-proxy-system")]
 #[cfg(target_os = "macos")]
 mod mac {
-    use system_configuration::core_foundation::base::{CFType, TCFType, TCFTypeRef};
+    use system_configuration::core_foundation::base::CFType;
     use system_configuration::core_foundation::dictionary::CFDictionary;
     use system_configuration::core_foundation::number::CFNumber;
     use system_configuration::core_foundation::string::{CFString, CFStringRef};
