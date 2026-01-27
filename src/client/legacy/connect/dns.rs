@@ -240,7 +240,95 @@ impl SocketAddrs {
     pub(super) fn len(&self) -> usize {
         self.iter.as_slice().len()
     }
+
+    /// Create an interleaved address iterator per RFC 8305 (Happy Eyeballs v2) Section 4.
+    ///
+    /// Takes `first_family_count` addresses from the preferred family,
+    /// then interleaves remaining addresses: one fallback, one preferred, repeat.
+    ///
+    /// Input:  `[v6_1, v6_2, v4_1, v4_2]` (IPv6 preferred)
+    /// Output: `[v6_1, v4_1, v6_2, v4_2]` (with `first_family_count=1`)
+    pub(super) fn interleave_by_family(self, first_family_count: usize) -> InterleavedAddrs {
+        InterleavedAddrs::new(self, first_family_count)
+    }
 }
+
+/// Iterator over addresses interleaved by family per RFC 8305 (Happy Eyeballs v2).
+pub(super) struct InterleavedAddrs {
+    inner: vec::IntoIter<SocketAddr>,
+    total: usize,
+}
+
+impl InterleavedAddrs {
+    fn new(addrs: SocketAddrs, first_family_count: usize) -> Self {
+        let addrs: Vec<_> = addrs.iter.collect();
+        let total = addrs.len();
+
+        if addrs.is_empty() {
+            return InterleavedAddrs {
+                inner: Vec::new().into_iter(),
+                total: 0,
+            };
+        }
+
+        // Determine preferred family from first address
+        let prefer_ipv6 = addrs[0].is_ipv6();
+
+        let (mut preferred, fallback): (Vec<_>, Vec<_>) = if prefer_ipv6 {
+            addrs.into_iter().partition(|a| a.is_ipv6())
+        } else {
+            addrs.into_iter().partition(|a| a.is_ipv4())
+        };
+
+        let mut result = Vec::with_capacity(total);
+
+        // Take first_family_count from preferred
+        let take_count = first_family_count.min(preferred.len());
+        result.extend(preferred.drain(..take_count));
+
+        // Interleave remaining: fallback, preferred, fallback, preferred...
+        let mut pref_iter = preferred.into_iter();
+        let mut fall_iter = fallback.into_iter();
+
+        loop {
+            match (fall_iter.next(), pref_iter.next()) {
+                (Some(f), Some(p)) => {
+                    result.push(f);
+                    result.push(p);
+                }
+                (Some(f), None) => result.push(f),
+                (None, Some(p)) => result.push(p),
+                (None, None) => break,
+            }
+        }
+
+        InterleavedAddrs {
+            inner: result.into_iter(),
+            total,
+        }
+    }
+
+    /// Total number of addresses (original count before any iteration).
+    pub(super) fn total(&self) -> usize {
+        self.total
+    }
+}
+
+impl Iterator for InterleavedAddrs {
+    type Item = SocketAddr;
+
+    #[inline]
+    fn next(&mut self) -> Option<SocketAddr> {
+        self.inner.next()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl ExactSizeIterator for InterleavedAddrs {}
 
 impl Iterator for SocketAddrs {
     type Item = SocketAddr;
@@ -356,5 +444,102 @@ mod tests {
         let name = Name::from_str(DOMAIN).expect("Should be a valid domain");
         assert_eq!(name.as_str(), DOMAIN);
         assert_eq!(name.to_string(), DOMAIN);
+    }
+
+    // === RFC 8305 Address Interleaving Tests ===
+
+    #[test]
+    fn test_interleave_by_family_basic() {
+        // IPv6 preferred (first in list), interleave with IPv4
+        let v6_1: SocketAddr = "[2001:db8::1]:80".parse().unwrap();
+        let v6_2: SocketAddr = "[2001:db8::2]:80".parse().unwrap();
+        let v4_1: SocketAddr = "192.0.2.1:80".parse().unwrap();
+        let v4_2: SocketAddr = "192.0.2.2:80".parse().unwrap();
+
+        let addrs = SocketAddrs::new(vec![v6_1, v6_2, v4_1, v4_2]);
+        let result: Vec<_> = addrs.interleave_by_family(1).collect();
+
+        // RFC 8305: first_family_count=1 means v6, v4, v6, v4...
+        assert_eq!(result, vec![v6_1, v4_1, v6_2, v4_2]);
+    }
+
+    #[test]
+    fn test_interleave_by_family_empty() {
+        let addrs = SocketAddrs::new(vec![]);
+        let result: Vec<_> = addrs.interleave_by_family(1).collect();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_interleave_by_family_single_family() {
+        // All IPv4 - no interleaving needed
+        let v4_1: SocketAddr = "192.0.2.1:80".parse().unwrap();
+        let v4_2: SocketAddr = "192.0.2.2:80".parse().unwrap();
+        let v4_3: SocketAddr = "192.0.2.3:80".parse().unwrap();
+
+        let addrs = SocketAddrs::new(vec![v4_1, v4_2, v4_3]);
+        let result: Vec<_> = addrs.interleave_by_family(1).collect();
+
+        assert_eq!(result, vec![v4_1, v4_2, v4_3]);
+    }
+
+    #[test]
+    fn test_interleave_by_family_count_2() {
+        // first_family_count=2: take 2 from preferred, then interleave
+        let v6_1: SocketAddr = "[2001:db8::1]:80".parse().unwrap();
+        let v6_2: SocketAddr = "[2001:db8::2]:80".parse().unwrap();
+        let v6_3: SocketAddr = "[2001:db8::3]:80".parse().unwrap();
+        let v4_1: SocketAddr = "192.0.2.1:80".parse().unwrap();
+        let v4_2: SocketAddr = "192.0.2.2:80".parse().unwrap();
+
+        let addrs = SocketAddrs::new(vec![v6_1, v6_2, v6_3, v4_1, v4_2]);
+        let result: Vec<_> = addrs.interleave_by_family(2).collect();
+
+        // First 2 v6, then interleave: v4, v6, v4
+        assert_eq!(result, vec![v6_1, v6_2, v4_1, v6_3, v4_2]);
+    }
+
+    #[test]
+    fn test_interleave_by_family_count_0() {
+        // first_family_count=0: immediate interleave, fallback first
+        let v6_1: SocketAddr = "[2001:db8::1]:80".parse().unwrap();
+        let v6_2: SocketAddr = "[2001:db8::2]:80".parse().unwrap();
+        let v4_1: SocketAddr = "192.0.2.1:80".parse().unwrap();
+        let v4_2: SocketAddr = "192.0.2.2:80".parse().unwrap();
+
+        let addrs = SocketAddrs::new(vec![v6_1, v6_2, v4_1, v4_2]);
+        let result: Vec<_> = addrs.interleave_by_family(0).collect();
+
+        // Fallback first: v4, v6, v4, v6
+        assert_eq!(result, vec![v4_1, v6_1, v4_2, v6_2]);
+    }
+
+    #[test]
+    fn test_interleave_by_family_count_exceeds() {
+        // first_family_count exceeds available preferred addresses
+        let v6_1: SocketAddr = "[2001:db8::1]:80".parse().unwrap();
+        let v4_1: SocketAddr = "192.0.2.1:80".parse().unwrap();
+        let v4_2: SocketAddr = "192.0.2.2:80".parse().unwrap();
+
+        let addrs = SocketAddrs::new(vec![v6_1, v4_1, v4_2]);
+        let result: Vec<_> = addrs.interleave_by_family(5).collect();
+
+        // Only 1 v6, take it, then all v4s
+        assert_eq!(result, vec![v6_1, v4_1, v4_2]);
+    }
+
+    #[test]
+    fn test_interleave_by_family_ipv4_preferred() {
+        // IPv4 first in list means IPv4 is preferred
+        let v4_1: SocketAddr = "192.0.2.1:80".parse().unwrap();
+        let v4_2: SocketAddr = "192.0.2.2:80".parse().unwrap();
+        let v6_1: SocketAddr = "[2001:db8::1]:80".parse().unwrap();
+        let v6_2: SocketAddr = "[2001:db8::2]:80".parse().unwrap();
+
+        let addrs = SocketAddrs::new(vec![v4_1, v4_2, v6_1, v6_2]);
+        let result: Vec<_> = addrs.interleave_by_family(1).collect();
+
+        // v4 preferred: v4, v6, v4, v6
+        assert_eq!(result, vec![v4_1, v6_1, v4_2, v6_2]);
     }
 }

@@ -22,7 +22,7 @@ base64 = { version = "0.22", optional = true }
 bytes = "1.7.1"
 futures-channel = { version = "0.3", optional = true }
 futures-core = { version = "0.3" }
-futures-util = { version = "0.3.16", default-features = false, optional = true }
+futures-util = { version = "0.3.16", default-features = false, features = ["alloc"], optional = true }
 http = "1.0"
 http-body = "1.0.0"
 hyper = "1.8.0"
@@ -43,6 +43,7 @@ futures-util = { version = "0.3.16", default-features = false, features = ["allo
 http-body-util = "0.1.0"
 tokio = { version = "1", features = ["macros", "test-util", "signal"] }
 tokio-test = "0.4"
+tokio-util = { version = "0.7", features = ["rt"] }
 tower-test = "0.4"
 pretty_env_logger = "0.5"
 
