@@ -586,7 +586,11 @@ mod mac {
     };
 
     pub(super) fn with_system(builder: &mut super::Builder) {
-        let store = SCDynamicStoreBuilder::new("").build();
+        let store = if let Some(store) = SCDynamicStoreBuilder::new("hyper-util").build() {
+            store
+        } else {
+            return;
+        };
 
         let proxies_map = if let Some(proxies_map) = store.get_proxies() {
             proxies_map
