@@ -1,8 +1,9 @@
 mod test_utils;
 
+use std::future::Future;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
-use std::pin::Pin;
+use std::pin::{pin, Pin};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::task::Poll;
@@ -10,9 +11,9 @@ use std::thread;
 use std::time::Duration;
 
 use futures_channel::{mpsc, oneshot};
+use futures_core::Stream;
 use futures_util::future::{self, FutureExt, TryFutureExt};
 use futures_util::stream::StreamExt;
-use futures_util::{self, Stream};
 use http_body_util::BodyExt;
 use http_body_util::{Empty, Full, StreamBody};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -132,7 +133,7 @@ async fn drop_client_closes_idle_connections() {
     res.unwrap();
 
     // not closed yet, just idle
-    future::poll_fn(|ctx| {
+    std::future::poll_fn(|ctx| {
         assert!(Pin::new(&mut closes).poll_next(ctx).is_pending());
         Poll::Ready(())
     })
@@ -142,8 +143,7 @@ async fn drop_client_closes_idle_connections() {
     drop(client);
 
     // and wait a few ticks for the connections to close
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
     t1.await.unwrap();
@@ -192,8 +192,7 @@ async fn drop_response_future_closes_in_progress_connection() {
     future::select(res, rx1).await;
 
     // res now dropped
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
 }
@@ -248,8 +247,7 @@ async fn drop_response_body_closes_in_progress_connection() {
     res.unwrap();
 
     // and wait a few ticks to see the connection drop
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
 }
@@ -301,8 +299,7 @@ async fn no_keep_alive_closes_connection() {
     let (res, _) = future::join(res, rx).await;
     res.unwrap();
 
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(close, t).await;
 }
@@ -348,8 +345,7 @@ async fn socket_disconnect_closes_idle_conn() {
     let (res, _) = future::join(res, rx).await;
     res.unwrap();
 
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
 }
@@ -561,7 +557,7 @@ async fn client_keep_alive_when_response_before_request_body_ends() {
     });
 
     future::join(res, rx2).await.0.unwrap();
-    future::poll_fn(|ctx| {
+    std::future::poll_fn(|ctx| {
         assert!(Pin::new(&mut closes).poll_next(ctx).is_pending());
         Poll::Ready(())
     })
@@ -570,8 +566,7 @@ async fn client_keep_alive_when_response_before_request_body_ends() {
     assert_eq!(connects.load(Ordering::Relaxed), 1);
 
     drop(client);
-    let t = tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out"));
-    futures_util::pin_mut!(t);
+    let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
 }
@@ -1254,10 +1249,7 @@ impl tower_service::Service<hyper::Uri> for MockConnector {
     type Response = crate::MockConnection;
     type Error = std::io::Error;
     type Future = std::pin::Pin<
-        Box<
-            dyn futures_util::Future<Output = std::result::Result<Self::Response, Self::Error>>
-                + Send,
-        >,
+        Box<dyn Future<Output = std::result::Result<Self::Response, Self::Error>> + Send>,
     >;
 
     // Polls the connector to check if it’s ready to handle a request.
