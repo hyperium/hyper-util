@@ -1,4 +1,4 @@
-//! todo
+//! Middleware services for normalizing request URIs and Host headers.
 
 use std::task::{Context, Poll};
 
@@ -6,13 +6,18 @@ use http::header::{HeaderValue, HOST};
 use http::{Method, Request, Uri};
 use tower_service::Service;
 
-/// todo
+/// A middleware that ensures the Host header matches the URI's authority.
+///
+/// Particularly useful for HTTP/1 clients and proxies, where the Host
+/// header is mandatory and should be derived from the request URI.
 #[derive(Clone, Debug)]
 pub struct SetHost<S> {
     inner: S,
 }
 
-/// todo
+/// A middleware that modifies the request target for HTTP/1 semantics.
+///
+/// Ensures CONNECT uses authority-form, and all other methods use origin-form.
 #[derive(Clone, Debug)]
 pub struct Http1RequestTarget<S> {
     inner: S,
@@ -21,7 +26,7 @@ pub struct Http1RequestTarget<S> {
 // ===== impl SetHost =====
 
 impl<S> SetHost<S> {
-    /// todo
+    /// Create a new `SetHost` middleware wrapping the given service.
     pub fn new(inner: S) -> Self {
         SetHost { inner }
     }
@@ -79,7 +84,7 @@ fn is_schema_secure(uri: &Uri) -> bool {
 // ===== impl Http1RequestTarget =====
 
 impl<S> Http1RequestTarget<S> {
-    /// todo
+    /// Create a new `Http1RequestTarget` middleware wrapping the given service.
     pub fn new(inner: S) -> Self {
         Http1RequestTarget { inner }
     }
