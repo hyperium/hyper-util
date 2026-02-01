@@ -6,10 +6,9 @@ use std::marker::PhantomData;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{self, Poll};
+use std::task::{self, ready, Poll};
 use std::time::Duration;
 
-use futures_core::ready;
 use futures_util::future::Either;
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
