@@ -71,7 +71,6 @@ full = [
     "http1",
     "http2",
     "tokio",
-    "tracing",
 ]
 
 client = ["hyper/client", "tokio/net", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
@@ -91,7 +90,13 @@ http2 = ["hyper/http2"]
 
 tokio = ["dep:tokio", "tokio/rt", "tokio/time"]
 
-tracing = ["dep:tracing"]
+# Currently unused feature. This previously attached the current span to all futures executed by
+# `TokioExecutor`, which would incorrectly extend application-level spans beyond their correct
+# endpoints due to asynchronous background tasks running under those spans. This is documented in
+# https://github.com/hyperium/hyper/issues/3904. Clients wishing to add spans to executed futures
+# should manually attach them to the futures provided to `TokioExecutor::execute`, or create their
+# own implementation of `Executor<Fut>` to attach spans as required by their particular context.
+tracing = []
 
 # internal features used in CI
 __internal_happy_eyeballs_tests = []
