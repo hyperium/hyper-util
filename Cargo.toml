@@ -105,5 +105,9 @@ name = "server"
 required-features = ["server", "http1", "tokio"]
 
 [[example]]
+name = "single_threaded_server"
+required-features = ["server", "http1", "http2", "tokio"]
+
+[[example]]
 name = "server_graceful"
 required-features = ["tokio", "server-graceful", "server-auto"]
