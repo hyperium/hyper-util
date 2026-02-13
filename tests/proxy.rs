@@ -1,3 +1,5 @@
+#![cfg(all(feature = "client-legacy", feature = "client-proxy"))]
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tower_service::Service;
