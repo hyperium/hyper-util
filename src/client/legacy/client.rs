@@ -495,7 +495,6 @@ where
         let ver = self.config.ver;
         let is_ver_h2 = ver == Ver::Http2;
         let connector = self.connector.clone();
-        let dst = domain_as_uri(pool_key.clone());
         hyper_lazy(move || {
             // Try to take a "connecting lock".
             //
@@ -511,6 +510,7 @@ where
                     return Either::Right(future::err(canceled));
                 }
             };
+            let dst = domain_as_uri(pool_key);
             Either::Left(
                 connector
                     .connect(super::connect::sealed::Internal, dst)
