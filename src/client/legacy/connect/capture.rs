@@ -47,7 +47,7 @@ pub struct CaptureConnection {
 /// connection is available.
 ///
 /// ```rust
-/// # #[cfg(feature  = "tokio")]
+/// # #[cfg(all(feature = "tokio", any(feature = "http1", feature = "http2")))]
 /// # async fn example() {
 /// use hyper_util::client::legacy::connect::capture_connection;
 /// use hyper_util::client::legacy::Client;

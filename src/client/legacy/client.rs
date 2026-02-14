@@ -118,7 +118,7 @@ impl Client<(), ()> {
     /// # Example
     ///
     /// ```
-    /// # #[cfg(feature = "tokio")]
+    /// # #[cfg(all(feature = "tokio", feature = "http2"))]
     /// # fn run () {
     /// use std::time::Duration;
     /// use hyper_util::client::legacy::Client;
@@ -994,7 +994,7 @@ fn is_schema_secure(uri: &Uri) -> bool {
 /// # Example
 ///
 /// ```
-/// # #[cfg(feature = "tokio")]
+/// # #[cfg(all(feature = "tokio", feature = "http2"))]
 /// # fn run () {
 /// use std::time::Duration;
 /// use hyper_util::client::legacy::Client;
@@ -1057,7 +1057,7 @@ impl Builder {
     /// # Example
     ///
     /// ```
-    /// # #[cfg(feature = "tokio")]
+    /// # #[cfg(all(feature = "tokio", feature = "http2"))]
     /// # fn run () {
     /// use std::time::Duration;
     /// use hyper_util::client::legacy::Client;

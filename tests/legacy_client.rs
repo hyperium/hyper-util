@@ -1,3 +1,5 @@
+#![cfg(all(feature = "client-legacy", any(feature = "http1", feature = "http2")))]
+
 mod test_utils;
 
 use std::io::{Read, Write};
@@ -38,6 +40,7 @@ fn s(buf: &[u8]) -> &str {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[test]
 fn drop_body_before_eof_closes_connection() {
     // https://github.com/hyperium/hyper/issues/1353
@@ -86,6 +89,7 @@ fn drop_body_before_eof_closes_connection() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn drop_client_closes_idle_connections() {
     let _ = pretty_env_logger::try_init();
@@ -150,6 +154,7 @@ async fn drop_client_closes_idle_connections() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn drop_response_future_closes_in_progress_connection() {
     let _ = pretty_env_logger::try_init();
@@ -199,6 +204,7 @@ async fn drop_response_future_closes_in_progress_connection() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn drop_response_body_closes_in_progress_connection() {
     let _ = pretty_env_logger::try_init();
@@ -255,6 +261,7 @@ async fn drop_response_body_closes_in_progress_connection() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn no_keep_alive_closes_connection() {
     // https://github.com/hyperium/hyper/issues/1383
@@ -308,6 +315,7 @@ async fn no_keep_alive_closes_connection() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn socket_disconnect_closes_idle_conn() {
     // notably when keep-alive is enabled
@@ -378,6 +386,7 @@ fn connect_call_is_lazy() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[test]
 fn client_keep_alive_0() {
     let _ = pretty_env_logger::try_init();
@@ -445,6 +454,7 @@ fn client_keep_alive_0() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[test]
 fn client_keep_alive_extra_body() {
     let _ = pretty_env_logger::try_init();
@@ -508,6 +518,7 @@ fn client_keep_alive_extra_body() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn client_keep_alive_when_response_before_request_body_ends() {
     let _ = pretty_env_logger::try_init();
@@ -577,6 +588,7 @@ async fn client_keep_alive_when_response_before_request_body_ends() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn client_keep_alive_eager_when_chunked() {
     // If a response body has been read to completion, with completion
@@ -663,6 +675,7 @@ async fn client_keep_alive_eager_when_chunked() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[test]
 fn connect_proxy_sends_absolute_uri() {
     let _ = pretty_env_logger::try_init();
@@ -700,6 +713,7 @@ fn connect_proxy_sends_absolute_uri() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[test]
 fn connect_proxy_http_connect_sends_authority_form() {
     let _ = pretty_env_logger::try_init();
@@ -738,6 +752,7 @@ fn connect_proxy_http_connect_sends_authority_form() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[test]
 fn client_upgrade() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -800,6 +815,7 @@ fn client_upgrade() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "server")]
 #[test]
 fn client_http2_upgrade() {
     use http::{Method, Response, Version};
@@ -882,6 +898,7 @@ fn client_http2_upgrade() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http2")]
 #[test]
 fn alpn_h2() {
     use http::Response;
@@ -950,6 +967,7 @@ fn alpn_h2() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[test]
 fn capture_connection_on_client() {
     let _ = pretty_env_logger::try_init();
@@ -981,6 +999,7 @@ fn capture_connection_on_client() {
 }
 
 #[cfg(not(miri))]
+#[cfg(feature = "http1")]
 #[test]
 fn connection_poisoning() {
     use std::sync::atomic::AtomicUsize;
@@ -1327,6 +1346,7 @@ impl tower_service::Service<hyper::Uri> for MockConnector {
 // Test for connection error propagation with PR #184.
 // Simulates a connection failure by setting failed=true and returning a custom io::Error.
 // Verifies the error propagates through hyper’s client as a hyper::Error(Io, ...).
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn test_connection_error_propagation_pr184() {
     // Define the error message for the simulated connection failure.
@@ -1384,6 +1404,7 @@ async fn test_connection_error_propagation_pr184() {
 // Simulates a connection that returns EOF immediately, causing hyper’s HTTP/1.1 parser
 // to fail with IncompleteMessage due to no response data.
 // Uses MockConnector with conn_error=None to keep failed=false, ensuring EOF behavior.
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn test_incomplete_message_error_pr184() {
     // Create an empty IoBuilder to simulate a connection with no data.
@@ -1443,6 +1464,7 @@ async fn test_incomplete_message_error_pr184() {
 // Test for a successful HTTP/1.1 connection using a mock connector.
 // Simulates a server that accepts a request and responds with a 200 OK.
 // Verifies the client correctly sends the request and receives the response.
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn test_successful_connection() {
     // Define the expected server response: a valid HTTP/1.1 200 OK with no body.
