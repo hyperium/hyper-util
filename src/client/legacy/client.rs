@@ -1512,6 +1512,8 @@ impl Builder {
     {
         #[cfg(feature = "http2")]
         self.h2_builder.timer(timer);
+        #[cfg(not(feature = "http2"))]
+        let _ = timer;
         self
     }
 
@@ -1568,7 +1570,7 @@ impl Builder {
     }
 
     /// Build a client with this configuration and the default `HttpConnector`.
-    #[cfg(feature = "tokio")]
+    #[cfg(all(feature = "tokio"))]
     pub fn build_http<B>(&self) -> Client<HttpConnector, B>
     where
         B: Body + Send,

@@ -1,4 +1,4 @@
-#![cfg(all(feature = "client-legacy", feature = "client-proxy"))]
+#![cfg(all(feature = "client-legacy", feature = "client-proxy", feature = "tokio"))]
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
