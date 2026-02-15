@@ -80,12 +80,16 @@ impl<E> Builder<E> {
     /// # Example
     ///
     /// ```
+    /// # #[cfg(all(feature = "tokio", feature = "http2"))]
+    /// # fn run() {
     /// use hyper_util::{
     ///     rt::TokioExecutor,
     ///     server::conn::auto,
     /// };
     ///
     /// auto::Builder::new(TokioExecutor::new());
+    /// # }
+    /// # fn main() {}
     /// ```
     pub fn new(executor: E) -> Self {
         Self {
@@ -179,7 +183,7 @@ impl<E> Builder<E> {
     /// auto::Builder::new(TokioExecutor::new())
     ///     .title_case_headers(true);
     /// ```
-    #[cfg(feature = "http1")]
+    #[cfg(all(feature = "tokio", feature = "http1"))]
     pub fn title_case_headers(mut self, enabled: bool) -> Self {
         self.http1.title_case_headers(enabled);
         self
@@ -203,7 +207,7 @@ impl<E> Builder<E> {
     /// auto::Builder::new(TokioExecutor::new())
     ///     .preserve_header_case(true);
     /// ```
-    #[cfg(feature = "http1")]
+    #[cfg(all(feature = "tokio", feature = "http1"))]
     pub fn preserve_header_case(mut self, enabled: bool) -> Self {
         self.http1.preserve_header_case(enabled);
         self
@@ -1124,17 +1128,24 @@ impl<E> Http2Builder<'_, E> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "tokio"))]
 mod tests {
-    use crate::{
-        rt::{TokioExecutor, TokioIo},
-        server::conn::auto,
-    };
+    use crate::rt::{TokioExecutor, TokioIo};
+    use crate::server::conn::auto;
     use http::{Request, Response};
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
     use http_body::Body;
-    use http_body_util::{BodyExt, Empty, Full};
-    use hyper::{body, body::Bytes, client, service::service_fn};
-    use std::{convert::Infallible, error::Error as StdError, net::SocketAddr, time::Duration};
+    use http_body_util::Full;
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
+    use http_body_util::{BodyExt, Empty};
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
+    use hyper::client;
+    use hyper::service::service_fn;
+    use hyper::{body, body::Bytes};
+    use std::convert::Infallible;
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
+    use std::error::Error as StdError;
+    use std::{net::SocketAddr, time::Duration};
     use tokio::{
         net::{TcpListener, TcpStream},
         pin,
@@ -1143,6 +1154,7 @@ mod tests {
     const BODY: &[u8] = b"Hello, world!";
 
     #[test]
+    #[cfg(all(feature = "http1", feature = "http2"))]
     fn configuration() {
         // One liner.
         auto::Builder::new(TokioExecutor::new())
@@ -1184,8 +1196,8 @@ mod tests {
             .http1_only();
     }
 
-    #[cfg(not(miri))]
     #[tokio::test]
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
     async fn http1() {
         let addr = start_server(false, false).await;
         let mut sender = connect_h1(addr).await;
@@ -1200,8 +1212,8 @@ mod tests {
         assert_eq!(body, BODY);
     }
 
-    #[cfg(not(miri))]
     #[tokio::test]
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
     async fn http2() {
         let addr = start_server(false, false).await;
         let mut sender = connect_h2(addr).await;
@@ -1216,8 +1228,8 @@ mod tests {
         assert_eq!(body, BODY);
     }
 
-    #[cfg(not(miri))]
     #[tokio::test]
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
     async fn http2_only() {
         let addr = start_server(false, true).await;
         let mut sender = connect_h2(addr).await;
@@ -1232,8 +1244,8 @@ mod tests {
         assert_eq!(body, BODY);
     }
 
-    #[cfg(not(miri))]
     #[tokio::test]
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
     async fn http2_only_fail_if_client_is_http1() {
         let addr = start_server(false, true).await;
         let mut sender = connect_h1(addr).await;
@@ -1244,8 +1256,8 @@ mod tests {
             .expect_err("should fail");
     }
 
-    #[cfg(not(miri))]
     #[tokio::test]
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
     async fn http1_only() {
         let addr = start_server(true, false).await;
         let mut sender = connect_h1(addr).await;
@@ -1260,8 +1272,8 @@ mod tests {
         assert_eq!(body, BODY);
     }
 
-    #[cfg(not(miri))]
     #[tokio::test]
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
     async fn http1_only_fail_if_client_is_http2() {
         let addr = start_server(true, false).await;
         let mut sender = connect_h2(addr).await;
@@ -1306,6 +1318,7 @@ mod tests {
         assert_eq!(connection_error.kind(), std::io::ErrorKind::Interrupted);
     }
 
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
     async fn connect_h1<B>(addr: SocketAddr) -> client::conn::http1::SendRequest<B>
     where
         B: Body + Send + 'static,
@@ -1320,6 +1333,7 @@ mod tests {
         sender
     }
 
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
     async fn connect_h2<B>(addr: SocketAddr) -> client::conn::http2::SendRequest<B>
     where
         B: Body + Unpin + Send + 'static,
@@ -1337,6 +1351,7 @@ mod tests {
         sender
     }
 
+    #[cfg(all(feature = "http1", feature = "http2", not(miri)))]
     async fn start_server(h1_only: bool, h2_only: bool) -> SocketAddr {
         let addr: SocketAddr = ([127, 0, 0, 1], 0).into();
         let listener = TcpListener::bind(addr).await.unwrap();

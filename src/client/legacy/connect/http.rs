@@ -1074,9 +1074,9 @@ mod tests {
     }
 
     // NOTE: pnet crate that we use in this test doesn't compile on Windows
+    #[tokio::test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
     async fn local_address() {
         use std::net::{IpAddr, TcpListener};
 
@@ -1112,8 +1112,8 @@ mod tests {
     }
 
     // NOTE: pnet crate that we use in this test doesn't compile on Windows
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     #[tokio::test]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     #[ignore = "setting `SO_BINDTODEVICE` requires the `CAP_NET_RAW` capability (works when running as root)"]
     async fn interface() {
         use socket2::{Domain, Protocol, Socket, Type};

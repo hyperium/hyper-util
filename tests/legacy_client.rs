@@ -1,9 +1,15 @@
-#![cfg(all(feature = "client-legacy", any(feature = "http1", feature = "http2")))]
+#![cfg(all(
+    feature = "client-legacy",
+    feature = "tokio",
+    any(feature = "http1", feature = "http2")
+))]
 
 mod test_utils;
 
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener};
+#[cfg(feature = "http2")]
+use std::net::SocketAddr;
+use std::net::TcpListener;
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -16,7 +22,9 @@ use futures_util::future::{self, FutureExt, TryFutureExt};
 use futures_util::stream::StreamExt;
 use futures_util::{self, Stream};
 use http_body_util::BodyExt;
-use http_body_util::{Empty, Full, StreamBody};
+#[cfg(feature = "http2")]
+use http_body_util::Full;
+use http_body_util::{Empty, StreamBody};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use hyper::body::Bytes;
@@ -24,7 +32,9 @@ use hyper::body::Frame;
 use hyper::Request;
 use hyper_util::client::legacy::connect::{capture_connection, HttpConnector};
 use hyper_util::client::legacy::Client;
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::TokioExecutor;
+#[cfg(feature = "http2")]
+use hyper_util::rt::TokioIo;
 
 use test_utils::{DebugConnector, DebugStream};
 
@@ -815,7 +825,7 @@ fn client_upgrade() {
 }
 
 #[cfg(not(miri))]
-#[cfg(feature = "server")]
+#[cfg(all(feature = "server", feature = "http1", feature = "http2"))]
 #[test]
 fn client_http2_upgrade() {
     use http::{Method, Response, Version};
@@ -1346,8 +1356,8 @@ impl tower_service::Service<hyper::Uri> for MockConnector {
 // Test for connection error propagation with PR #184.
 // Simulates a connection failure by setting failed=true and returning a custom io::Error.
 // Verifies the error propagates through hyper’s client as a hyper::Error(Io, ...).
-#[cfg(feature = "http1")]
 #[tokio::test]
+#[cfg(feature = "http1")]
 async fn test_connection_error_propagation_pr184() {
     // Define the error message for the simulated connection failure.
     // Reused for creating the error and verifying the result.
@@ -1404,8 +1414,8 @@ async fn test_connection_error_propagation_pr184() {
 // Simulates a connection that returns EOF immediately, causing hyper’s HTTP/1.1 parser
 // to fail with IncompleteMessage due to no response data.
 // Uses MockConnector with conn_error=None to keep failed=false, ensuring EOF behavior.
-#[cfg(feature = "http1")]
 #[tokio::test]
+#[cfg(feature = "http1")]
 async fn test_incomplete_message_error_pr184() {
     // Create an empty IoBuilder to simulate a connection with no data.
     // No write or read expectations, so poll_read returns EOF (Poll::Ready(Ok(0))).
@@ -1464,8 +1474,8 @@ async fn test_incomplete_message_error_pr184() {
 // Test for a successful HTTP/1.1 connection using a mock connector.
 // Simulates a server that accepts a request and responds with a 200 OK.
 // Verifies the client correctly sends the request and receives the response.
-#[cfg(feature = "http1")]
 #[tokio::test]
+#[cfg(feature = "http1")]
 async fn test_successful_connection() {
     // Define the expected server response: a valid HTTP/1.1 200 OK with no body.
     let response = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";

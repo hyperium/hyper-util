@@ -1,3 +1,5 @@
+#![cfg(any(feature = "http1", feature = "http2"))]
+
 use std::{cmp, io};
 
 use bytes::{Buf, Bytes};
