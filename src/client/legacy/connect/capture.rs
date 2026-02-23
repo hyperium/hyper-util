@@ -3,7 +3,7 @@ use std::{ops::Deref, sync::Arc};
 use http::Request;
 use tokio::sync::watch;
 
-use super::Connected;
+use crate::client::connect::{self, Connected};
 
 /// [`CaptureConnection`] allows callers to capture [`Connected`] information
 ///
@@ -71,7 +71,13 @@ pub struct CaptureConnection {
 /// ```
 pub fn capture_connection<B>(request: &mut Request<B>) -> CaptureConnection {
     let (tx, rx) = CaptureConnection::new();
-    request.extensions_mut().insert(tx);
+    request
+        .extensions_mut()
+        .insert(connect::CaptureConnection::new(
+            move |connected: &Connected| {
+                tx.set(connected);
+            },
+        ));
     rx
 }
 
