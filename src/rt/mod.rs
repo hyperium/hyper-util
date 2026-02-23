@@ -9,4 +9,7 @@ pub(crate) use self::io::{read, write_all};
 pub mod tokio;
 
 #[cfg(feature = "tokio")]
-pub use self::tokio::{TokioExecutor, TokioIo, TokioTimer};
+pub use self::tokio::{TokioIo, TokioTimer};
+
+#[cfg(feature = "tokio-rt")]
+pub use self::tokio::TokioExecutor;

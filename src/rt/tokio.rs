@@ -51,6 +51,8 @@
 //! [`Write`]: hyper::rt::Write
 //! [tokio-async-docs]: https://docs.rs/tokio/latest/tokio/#asynchronous-io
 
+use hyper::rt::{Sleep, Timer};
+use pin_project_lite::pin_project;
 use std::{
     future::Future,
     pin::Pin,
@@ -58,8 +60,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use hyper::rt::{Executor, Sleep, Timer};
-use pin_project_lite::pin_project;
+#[cfg(feature = "tokio-rt")]
+use hyper::rt::Executor;
 
 #[cfg(feature = "tracing")]
 use tracing::instrument::Instrument;
@@ -70,6 +72,7 @@ mod with_hyper_io;
 mod with_tokio_io;
 
 /// Future executor that utilises `tokio` threads.
+#[cfg(feature = "tokio-rt")]
 #[non_exhaustive]
 #[derive(Default, Debug, Clone)]
 pub struct TokioExecutor {}
@@ -102,6 +105,7 @@ pin_project! {
 
 // ===== impl TokioExecutor =====
 
+#[cfg(feature = "tokio-rt")]
 impl<Fut> Executor<Fut> for TokioExecutor
 where
     Fut: Future + Send + 'static,
@@ -116,6 +120,7 @@ where
     }
 }
 
+#[cfg(feature = "tokio-rt")]
 impl TokioExecutor {
     /// Create new executor that relies on [`tokio::spawn`] to execute futures.
     pub fn new() -> Self {
@@ -324,7 +329,7 @@ impl TokioSleep {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "tokio-rt"))]
 mod tests {
     use crate::rt::TokioExecutor;
     use hyper::rt::Executor;
