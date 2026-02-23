@@ -1,5 +1,8 @@
 //! HTTP client utilities
 
+/// Connectors used by the `Client`.
+pub mod connect;
+
 /// Legacy implementations of `connect` module and `Client`
 #[cfg(feature = "client-legacy")]
 pub mod legacy;
