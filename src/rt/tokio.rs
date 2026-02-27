@@ -147,6 +147,12 @@ impl<T> TokioIo<T> {
     }
 }
 
+impl<T> From<T> for TokioIo<T> {
+    fn from(value: T) -> TokioIo<T> {
+        Self::new(value)
+    }
+}
+
 impl<T> hyper::rt::Read for TokioIo<T>
 where
     T: tokio::io::AsyncRead,
