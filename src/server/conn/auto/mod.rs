@@ -406,7 +406,7 @@ impl<T> std::ops::Deref for Cow<'_, T> {
     type Target = T;
     fn deref(&self) -> &T {
         match self {
-            Cow::Borrowed(t) => &*t,
+            Cow::Borrowed(t) => t,
             Cow::Owned(ref t) => t,
         }
     }
