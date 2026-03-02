@@ -1512,6 +1512,18 @@ impl Builder {
         self
     }
 
+    /// Sets the `SETTINGS_MAX_CONCURRENT_STREAMS` option for HTTP2 connections.
+    ///
+    /// Passing `None` will do nothing.
+    ///
+    /// The default value is determined by the `h2` crate.
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+    pub fn http2_max_concurrent_streams(&mut self, max: impl Into<Option<u32>>) -> &mut Self {
+        self.h2_builder.max_concurrent_streams(max);
+        self
+    }
+
     /// Provide a timer to be used for h2
     ///
     /// See the documentation of [`h2::client::Builder::timer`] for more
