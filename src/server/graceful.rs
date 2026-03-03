@@ -27,6 +27,7 @@ pub struct GracefulShutdown {
 /// This type can only watch a connection, it cannot trigger a shutdown.
 ///
 /// Call [`GracefulShutdown::watcher()`] to construct one of these.
+#[derive(Clone)]
 pub struct Watcher {
     rx: watch::Receiver<()>,
 }
