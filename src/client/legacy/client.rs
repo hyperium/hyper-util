@@ -8,6 +8,9 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::future::{poll_fn, Future};
 use std::pin::Pin;
+#[cfg(feature = "http2")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
 
@@ -50,6 +53,11 @@ struct Config {
     retry_canceled_requests: bool,
     set_host: bool,
     ver: Ver,
+    /// Client-side limit on concurrent HTTP/2 streams per TCP connection.
+    /// When active streams on the current connection reach this value, a new
+    /// TCP connection is created instead of multiplexing further.
+    #[cfg(feature = "http2")]
+    h2_max_concurrent_streams: usize,
 }
 
 /// Client errors
@@ -495,6 +503,8 @@ where
         let ver = self.config.ver;
         let is_ver_h2 = ver == Ver::Http2;
         let connector = self.connector.clone();
+        #[cfg(feature = "http2")]
+        let h2_max_concurrent_streams = self.config.h2_max_concurrent_streams;
         hyper_lazy(move || {
             // Try to take a "connecting lock".
             //
@@ -657,6 +667,12 @@ where
                                 PoolClient {
                                     conn_info: connected,
                                     tx,
+                                    #[cfg(feature = "http2")]
+                                    h2_stream_count: Some(Arc::new(AtomicUsize::new(0))),
+                                    #[cfg(feature = "http2")]
+                                    h2_stream_guard: None,
+                                    #[cfg(feature = "http2")]
+                                    h2_max_concurrent_streams,
                                 },
                             ))
                         }))
@@ -761,11 +777,35 @@ impl Future for ResponseFuture {
 
 // ===== impl PoolClient =====
 
+/// RAII guard that decrements the HTTP/2 stream counter when dropped.
+/// Only the "checkout" copy of a PoolClient holds a guard; the idle pool copy
+/// does not, so the counter accurately reflects in-flight request count.
+#[cfg(feature = "http2")]
+struct H2StreamGuard(Arc<AtomicUsize>);
+
+#[cfg(feature = "http2")]
+impl Drop for H2StreamGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
 struct PoolClient<B> {
     conn_info: Connected,
     tx: PoolTx<B>,
+    /// Shared counter of active HTTP/2 streams across all clones of the same
+    /// underlying TCP connection.
+    #[cfg(feature = "http2")]
+    h2_stream_count: Option<Arc<AtomicUsize>>,
+    /// Present on checkout copies only; decrements the stream counter on drop.
+    #[cfg(feature = "http2")]
+    h2_stream_guard: Option<H2StreamGuard>,
+    /// Client-configured threshold: when active streams reach this value a new
+    /// TCP connection will be created instead of multiplexing on the existing one.
+    #[cfg(feature = "http2")]
+    h2_max_concurrent_streams: usize,
 }
 
 enum PoolTx<B> {
@@ -864,13 +904,30 @@ where
             }),
             #[cfg(feature = "http2")]
             PoolTx::Http2(tx) => {
-                let b = PoolClient {
+                let stream_count = self
+                    .h2_stream_count
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(AtomicUsize::new(0)));
+                // Increment before handing out the checkout copy.
+                stream_count.fetch_add(1, Ordering::Relaxed);
+                let guard = H2StreamGuard(stream_count.clone());
+
+                // The pool copy (a) holds the shared counter but no guard, so
+                // it does not decrement on drop.
+                let a = PoolClient {
                     conn_info: self.conn_info.clone(),
                     tx: PoolTx::Http2(tx.clone()),
+                    h2_stream_count: Some(stream_count.clone()),
+                    h2_stream_guard: None,
+                    h2_max_concurrent_streams: self.h2_max_concurrent_streams,
                 };
-                let a = PoolClient {
+                // The checkout copy (b) owns the guard and decrements when dropped.
+                let b = PoolClient {
                     conn_info: self.conn_info,
                     tx: PoolTx::Http2(tx),
+                    h2_stream_count: Some(stream_count),
+                    h2_stream_guard: Some(guard),
+                    h2_max_concurrent_streams: self.h2_max_concurrent_streams,
                 };
                 pool::Reservation::Shared(a, b)
             }
@@ -879,6 +936,14 @@ where
 
     fn can_share(&self) -> bool {
         self.is_http2()
+    }
+
+    fn is_at_capacity(&self) -> bool {
+        #[cfg(feature = "http2")]
+        if let Some(ref count) = self.h2_stream_count {
+            return count.load(Ordering::Relaxed) >= self.h2_max_concurrent_streams;
+        }
+        false
     }
 }
 
@@ -1020,6 +1085,11 @@ pub struct Builder {
     h2_builder: hyper::client::conn::http2::Builder<Exec>,
     pool_config: pool::Config,
     pool_timer: Option<timer::Timer>,
+    /// Maximum number of concurrent HTTP/2 streams per TCP connection before a
+    /// new connection is created. Stored here so it can be threaded into each
+    /// `PoolClient` at connection time.
+    #[cfg(feature = "http2")]
+    h2_max_concurrent_streams: usize,
 }
 
 impl Builder {
@@ -1034,6 +1104,8 @@ impl Builder {
                 retry_canceled_requests: true,
                 set_host: true,
                 ver: Ver::Auto,
+                #[cfg(feature = "http2")]
+                h2_max_concurrent_streams: usize::MAX,
             },
             exec: exec.clone(),
             #[cfg(feature = "http1")]
@@ -1045,6 +1117,8 @@ impl Builder {
                 max_idle_per_host: usize::MAX,
             },
             pool_timer: None,
+            #[cfg(feature = "http2")]
+            h2_max_concurrent_streams: usize::MAX,
         }
     }
     /// Set an optional timeout for idle sockets being kept-alive.
@@ -1521,6 +1595,28 @@ impl Builder {
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_max_concurrent_streams(&mut self, max: impl Into<Option<u32>>) -> &mut Self {
         self.h2_builder.max_concurrent_streams(max);
+        self
+    }
+
+    /// Sets the maximum number of concurrent HTTP/2 streams per TCP connection
+    /// in the connection pool.
+    ///
+    /// When the number of in-flight streams on an existing HTTP/2 TCP connection
+    /// reaches this limit, a **new** TCP connection is created for subsequent
+    /// requests rather than multiplexing them onto the saturated connection.
+    ///
+    /// This is a client-side pool control knob that operates independently of
+    /// the server-advertised `SETTINGS_MAX_CONCURRENT_STREAMS` value. Setting
+    /// it to a value lower than the server's limit lets you tune how aggressively
+    /// the pool fans out across multiple TCP connections.
+    ///
+    /// Default is `usize::MAX` (a new connection is only created once the
+    /// server's own limit is hit via `http2_max_concurrent_streams`).
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+    pub fn http2_pool_max_concurrent_streams(&mut self, max: usize) -> &mut Self {
+        self.h2_max_concurrent_streams = max;
+        self.client_config.h2_max_concurrent_streams = max;
         self
     }
 

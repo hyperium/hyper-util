@@ -39,6 +39,12 @@ pub trait Poolable: Unpin + Send + Sized + 'static {
     /// Allows for HTTP/2 to return a shared reservation.
     fn reserve(self) -> Reservation<Self>;
     fn can_share(&self) -> bool;
+    /// Returns true if this connection has reached its maximum concurrent stream
+    /// limit and should not be reused for new requests. A new connection should
+    /// be established instead.
+    fn is_at_capacity(&self) -> bool {
+        false
+    }
 }
 
 pub trait Key: Eq + Hash + Clone + Debug + Unpin + Send + 'static {}
@@ -316,6 +322,18 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
                 continue;
             }
 
+            // If the connection has reached its max concurrent stream limit,
+            // push it back and signal that no available connection was found.
+            // This allows connect_to to establish a new TCP connection.
+            if entry.value.is_at_capacity() {
+                trace!(
+                    "connection at max concurrent streams for {:?}, skipping",
+                    self.key
+                );
+                self.list.push(entry);
+                return None;
+            }
+
             let value = match entry.value.reserve() {
                 #[cfg(feature = "http2")]
                 Reservation::Shared(to_reinsert, to_checkout) => {
@@ -347,8 +365,21 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
 
     fn put(&mut self, key: K, value: T, __pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
         if value.can_share() && self.idle.contains_key(&key) {
-            trace!("put; existing idle HTTP/2 connection for {:?}", key);
-            return;
+            // If the existing connection is at capacity, allow inserting a
+            // new connection alongside it so additional requests can proceed.
+            let existing_at_capacity = self
+                .idle
+                .get(&key)
+                .and_then(|list| list.last())
+                .map_or(false, |e| e.value.is_at_capacity());
+            if !existing_at_capacity {
+                trace!("put; existing idle HTTP/2 connection for {:?}", key);
+                return;
+            }
+            trace!(
+                "put; existing HTTP/2 connection at capacity, adding new connection for {:?}",
+                key
+            );
         }
         trace!("put; add idle connection for {:?}", key);
         let mut remove_waiters = false;
@@ -1111,5 +1142,113 @@ mod tests {
         );
 
         assert!(!pool.locked().idle.contains_key(&key));
+    }
+
+    // ---- helpers for max-concurrent-streams tests ----
+
+    /// A shared (HTTP/2-like) connection that can be flagged as "at capacity".
+    #[derive(Clone, Debug)]
+    struct SharedConn {
+        at_capacity: bool,
+    }
+
+    impl Poolable for SharedConn {
+        fn is_open(&self) -> bool {
+            true
+        }
+
+        fn reserve(self) -> Reservation<Self> {
+            Reservation::Shared(self.clone(), self)
+        }
+
+        fn can_share(&self) -> bool {
+            true
+        }
+
+        fn is_at_capacity(&self) -> bool {
+            self.at_capacity
+        }
+    }
+
+    /// Checkout of an at-capacity connection should return `Poll::Pending`
+    /// (the connection is preserved in the idle list, not consumed).
+    #[tokio::test]
+    async fn test_pool_h2_at_capacity_checkout_skips_and_preserves() {
+        let pool = pool_no_timer::<SharedConn, KeyImpl>();
+        let key = host_key("foo");
+
+        // Insert a connection that is already at its stream limit.
+        let pooled = pool.pooled(c(key.clone()), SharedConn { at_capacity: true });
+        drop(pooled); // returns it to idle
+
+        assert_eq!(
+            pool.locked().idle.get(&key).map(|l| l.len()),
+            Some(1),
+            "connection should be in idle"
+        );
+
+        // Checkout should not hand out the full connection.
+        let mut checkout = pool.checkout(key.clone());
+        let poll_once = PollOnce(&mut checkout);
+        let is_pending = poll_once.await.is_none();
+        assert!(
+            is_pending,
+            "checkout should be pending when connection is at capacity"
+        );
+
+        // The full connection must still be sitting in the idle list.
+        assert_eq!(
+            pool.locked().idle.get(&key).map(|l| l.len()),
+            Some(1),
+            "at-capacity connection should remain in idle after skipped checkout"
+        );
+    }
+
+    /// When the only idle connection is at capacity, `put()` should accept a
+    /// new connection (instead of silently dropping it as it normally does for
+    /// HTTP/2 when one already exists).
+    #[test]
+    fn test_pool_h2_at_capacity_allows_second_connection() {
+        let pool = pool_no_timer::<SharedConn, KeyImpl>();
+        let key = host_key("foo");
+
+        // Insert a connection that is already at capacity.
+        let full = pool.pooled(c(key.clone()), SharedConn { at_capacity: true });
+        drop(full);
+
+        assert_eq!(pool.locked().idle.get(&key).map(|l| l.len()), Some(1));
+
+        // A brand-new connection should be accepted alongside the full one.
+        let fresh = pool.pooled(c(key.clone()), SharedConn { at_capacity: false });
+        drop(fresh);
+
+        assert_eq!(
+            pool.locked().idle.get(&key).map(|l| l.len()),
+            Some(2),
+            "new connection should be added when existing connection is at capacity"
+        );
+    }
+
+    /// When the existing idle connection still has capacity, `put()` should
+    /// silently drop the newcomer (existing behaviour is unchanged).
+    #[test]
+    fn test_pool_h2_not_at_capacity_rejects_second_connection() {
+        let pool = pool_no_timer::<SharedConn, KeyImpl>();
+        let key = host_key("foo");
+
+        let first = pool.pooled(c(key.clone()), SharedConn { at_capacity: false });
+        drop(first);
+
+        assert_eq!(pool.locked().idle.get(&key).map(|l| l.len()), Some(1));
+
+        // A second connection should be rejected because the first has room.
+        let second = pool.pooled(c(key.clone()), SharedConn { at_capacity: false });
+        drop(second);
+
+        assert_eq!(
+            pool.locked().idle.get(&key).map(|l| l.len()),
+            Some(1),
+            "second connection should be dropped when first still has capacity"
+        );
     }
 }
