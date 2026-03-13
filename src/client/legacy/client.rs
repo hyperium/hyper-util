@@ -4,6 +4,7 @@
 //! For now, to enable people to use hyper 1.0 quicker, this `Client` exists
 //! in much the same way it did in hyper 0.14.
 
+use std::env;
 use std::error::Error as StdError;
 use std::fmt;
 use std::future::{poll_fn, Future};
@@ -1094,6 +1095,16 @@ pub struct Builder {
     h2_max_concurrent_streams: usize,
 }
 
+/// Default max concurrent HTTP/2 streams per connection. Uses
+/// `TEST_MAX_STREAM_PER_CONN` env var if set and parseable; otherwise `usize::MAX`.
+#[cfg(feature = "http2")]
+fn default_h2_pool_max_concurrent_streams() -> usize {
+    env::var("TEST_MAX_STREAM_PER_CONN")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(usize::MAX)
+}
+
 impl Builder {
     /// Construct a new Builder.
     pub fn new<E>(executor: E) -> Self
@@ -1101,13 +1112,15 @@ impl Builder {
         E: hyper::rt::Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
     {
         let exec = Exec::new(executor);
+        #[cfg(feature = "http2")]
+        let h2_max = default_h2_pool_max_concurrent_streams();
         Self {
             client_config: Config {
                 retry_canceled_requests: true,
                 set_host: true,
                 ver: Ver::Auto,
                 #[cfg(feature = "http2")]
-                h2_max_concurrent_streams: usize::MAX,
+                h2_max_concurrent_streams: h2_max,
             },
             exec: exec.clone(),
             #[cfg(feature = "http1")]
@@ -1120,7 +1133,7 @@ impl Builder {
             },
             pool_timer: None,
             #[cfg(feature = "http2")]
-            h2_max_concurrent_streams: usize::MAX,
+            h2_max_concurrent_streams: h2_max,
         }
     }
     /// Set an optional timeout for idle sockets being kept-alive.
