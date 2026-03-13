@@ -897,6 +897,12 @@ where
             PoolTx::Http1(tx) => pool::Reservation::Unique(PoolClient {
                 conn_info: self.conn_info,
                 tx: PoolTx::Http1(tx),
+                #[cfg(feature = "http2")]
+                h2_stream_count: None,
+                #[cfg(feature = "http2")]
+                h2_stream_guard: None,
+                #[cfg(feature = "http2")]
+                h2_max_concurrent_streams: 0,
             }),
             #[cfg(feature = "http2")]
             PoolTx::Http2(tx) => {
