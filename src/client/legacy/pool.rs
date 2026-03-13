@@ -704,8 +704,14 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
             let (entry, empty) = if let Some((e, empty)) = maybe_entry {
                 (Some(e), empty)
             } else {
-                // No entry found means nuke the list for sure.
-                (None, true)
+                // No usable entry was returned. The list may still contain
+                // at-capacity connections (pushed back by IdlePopper), so
+                // check the actual list state instead of assuming empty.
+                let actually_empty = inner
+                    .idle
+                    .get(&self.key)
+                    .map_or(true, |list| list.is_empty());
+                (None, actually_empty)
             };
             if empty {
                 //TODO: This could be done with the HashMap::entry API instead.
@@ -873,7 +879,7 @@ mod tests {
     use std::task::{self, Poll};
     use std::time::Duration;
 
-    use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
+    use super::{Connecting, Key, Pool, Poolable, Reservation, Ver, WeakOpt};
     use crate::rt::{TokioExecutor, TokioTimer};
 
     use crate::common::timer;
@@ -1177,9 +1183,11 @@ mod tests {
         let pool = pool_no_timer::<SharedConn, KeyImpl>();
         let key = host_key("foo");
 
-        // Insert a connection that is already at its stream limit.
-        let pooled = pool.pooled(c(key.clone()), SharedConn { at_capacity: true });
-        drop(pooled); // returns it to idle
+        // Use pool.connecting with Ver::Http2 so the connecting set is properly
+        // maintained for shared (H2-like) reservations.
+        let connecting = pool.connecting(&key, Ver::Http2).unwrap();
+        let pooled = pool.pooled(connecting, SharedConn { at_capacity: true });
+        drop(pooled);
 
         assert_eq!(
             pool.locked().idle.get(&key).map(|l| l.len()),
@@ -1207,19 +1215,23 @@ mod tests {
     /// When the only idle connection is at capacity, `put()` should accept a
     /// new connection (instead of silently dropping it as it normally does for
     /// HTTP/2 when one already exists).
-    #[test]
-    fn test_pool_h2_at_capacity_allows_second_connection() {
+    #[tokio::test]
+    async fn test_pool_h2_at_capacity_allows_second_connection() {
         let pool = pool_no_timer::<SharedConn, KeyImpl>();
         let key = host_key("foo");
 
         // Insert a connection that is already at capacity.
-        let full = pool.pooled(c(key.clone()), SharedConn { at_capacity: true });
+        let connecting = pool.connecting(&key, Ver::Http2).unwrap();
+        let full = pool.pooled(connecting, SharedConn { at_capacity: true });
         drop(full);
 
         assert_eq!(pool.locked().idle.get(&key).map(|l| l.len()), Some(1));
 
         // A brand-new connection should be accepted alongside the full one.
-        let fresh = pool.pooled(c(key.clone()), SharedConn { at_capacity: false });
+        // The first connecting lock is released after pooled(), so a new one
+        // can be acquired for the second connection.
+        let connecting2 = pool.connecting(&key, Ver::Http2).unwrap();
+        let fresh = pool.pooled(connecting2, SharedConn { at_capacity: false });
         drop(fresh);
 
         assert_eq!(
@@ -1231,18 +1243,20 @@ mod tests {
 
     /// When the existing idle connection still has capacity, `put()` should
     /// silently drop the newcomer (existing behaviour is unchanged).
-    #[test]
-    fn test_pool_h2_not_at_capacity_rejects_second_connection() {
+    #[tokio::test]
+    async fn test_pool_h2_not_at_capacity_rejects_second_connection() {
         let pool = pool_no_timer::<SharedConn, KeyImpl>();
         let key = host_key("foo");
 
-        let first = pool.pooled(c(key.clone()), SharedConn { at_capacity: false });
+        let connecting = pool.connecting(&key, Ver::Http2).unwrap();
+        let first = pool.pooled(connecting, SharedConn { at_capacity: false });
         drop(first);
 
         assert_eq!(pool.locked().idle.get(&key).map(|l| l.len()), Some(1));
 
-        // A second connection should be rejected because the first has room.
-        let second = pool.pooled(c(key.clone()), SharedConn { at_capacity: false });
+        // A second connection should be rejected because the first still has room.
+        let connecting2 = pool.connecting(&key, Ver::Http2).unwrap();
+        let second = pool.pooled(connecting2, SharedConn { at_capacity: false });
         drop(second);
 
         assert_eq!(
