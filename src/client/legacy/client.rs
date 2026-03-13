@@ -54,8 +54,6 @@ struct Config {
     set_host: bool,
     ver: Ver,
     /// Client-side limit on concurrent HTTP/2 streams per TCP connection.
-    /// When active streams on the current connection reach this value, a new
-    /// TCP connection is created instead of multiplexing further.
     #[cfg(feature = "http2")]
     h2_max_concurrent_streams: usize,
 }
@@ -778,15 +776,13 @@ impl Future for ResponseFuture {
 // ===== impl PoolClient =====
 
 /// RAII guard that decrements the HTTP/2 stream counter when dropped.
-/// Only the "checkout" copy of a PoolClient holds a guard; the idle pool copy
-/// does not, so the counter accurately reflects in-flight request count.
 #[cfg(feature = "http2")]
 struct H2StreamGuard(Arc<AtomicUsize>);
 
 #[cfg(feature = "http2")]
 impl Drop for H2StreamGuard {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -909,7 +905,7 @@ where
                     .clone()
                     .unwrap_or_else(|| Arc::new(AtomicUsize::new(0)));
                 // Increment before handing out the checkout copy.
-                stream_count.fetch_add(1, Ordering::Relaxed);
+                stream_count.fetch_add(1, Ordering::SeqCst);
                 let guard = H2StreamGuard(stream_count.clone());
 
                 // The pool copy (a) holds the shared counter but no guard, so
@@ -941,7 +937,7 @@ where
     fn is_at_capacity(&self) -> bool {
         #[cfg(feature = "http2")]
         if let Some(ref count) = self.h2_stream_count {
-            return count.load(Ordering::Relaxed) >= self.h2_max_concurrent_streams;
+            return count.load(Ordering::SeqCst) >= self.h2_max_concurrent_streams;
         }
         false
     }
