@@ -1512,6 +1512,24 @@ impl Builder {
         self
     }
 
+    /// Configures the maximum number of local resets due to protocol errors made by the remote end.
+    ///
+    /// See the documentation of [`h2::client::Builder::max_local_error_reset_streams`] for more
+    /// details.
+    ///
+    /// The default value is determined by the `h2` crate.
+    ///
+    /// [`h2::client::Builder::max_local_error_reset_streams`]: https://docs.rs/h2/latest/h2/client/struct.Builder.html#method.max_local_error_reset_streams
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+    pub fn http2_max_local_error_reset_streams(
+        &mut self,
+        max: impl Into<Option<usize>>,
+    ) -> &mut Self {
+        self.h2_builder.max_local_error_reset_streams(max);
+        self
+    }
+
     /// Sets the `SETTINGS_MAX_CONCURRENT_STREAMS` option for HTTP2 connections.
     ///
     /// Passing `None` will do nothing.

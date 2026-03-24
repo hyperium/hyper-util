@@ -24,7 +24,7 @@ futures-channel = { version = "0.3", optional = true }
 futures-util = { version = "0.3.16", default-features = false, optional = true }
 http = "1.0"
 http-body = "1.0.0"
-hyper = "1.8.0"
+hyper = "1.9.0"
 ipnet = { version = "2.9", optional = true }
 libc = { version = "0.2", optional = true }
 percent-encoding = { version = "2.3", optional = true }
