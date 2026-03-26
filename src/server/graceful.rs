@@ -163,12 +163,12 @@ pub trait GracefulConnection: Future<Output = Result<(), Self::Error>> + private
 }
 
 #[cfg(feature = "http1")]
-impl<I, B, S> GracefulConnection for hyper::server::conn::http1::Connection<I, S>
+impl<'body, I, B, S> GracefulConnection for hyper::server::conn::http1::Connection<'body, I, S>
 where
-    S: hyper::service::HttpService<hyper::body::Incoming, ResBody = B>,
+    S: hyper::service::HttpService<hyper::body::Incoming, ResBody = B> + 'body,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
-    B: hyper::body::Body + 'static,
+    B: hyper::body::Body + 'body,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     type Error = hyper::Error;
@@ -179,12 +179,13 @@ where
 }
 
 #[cfg(feature = "http2")]
-impl<I, B, S, E> GracefulConnection for hyper::server::conn::http2::Connection<I, S, E>
+impl<'body, I, B, S, E> GracefulConnection
+    for hyper::server::conn::http2::Connection<'body, I, S, E>
 where
     S: hyper::service::HttpService<hyper::body::Incoming, ResBody = B>,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
-    B: hyper::body::Body + 'static,
+    B: hyper::body::Body + 'body,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     E: hyper::rt::bounds::Http2ServerConnExec<S::Future, B>,
 {
@@ -196,13 +197,15 @@ where
 }
 
 #[cfg(feature = "server-auto")]
-impl<I, B, S, E> GracefulConnection for crate::server::conn::auto::Connection<'_, I, S, E>
+impl<'body, I, B, S, E> GracefulConnection
+    for crate::server::conn::auto::Connection<'_, 'body, I, S, E>
 where
-    S: hyper::service::Service<http::Request<hyper::body::Incoming>, Response = http::Response<B>>,
+    S: hyper::service::Service<http::Request<hyper::body::Incoming>, Response = http::Response<B>>
+        + 'body,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     S::Future: 'static,
     I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
-    B: hyper::body::Body + 'static,
+    B: hyper::body::Body + 'body,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     E: hyper::rt::bounds::Http2ServerConnExec<S::Future, B>,
 {
@@ -214,10 +217,11 @@ where
 }
 
 #[cfg(feature = "server-auto")]
-impl<I, B, S, E> GracefulConnection
-    for crate::server::conn::auto::UpgradeableConnection<'_, I, S, E>
+impl<'body, I, B, S, E> GracefulConnection
+    for crate::server::conn::auto::UpgradeableConnection<'_, 'body, I, S, E>
 where
-    S: hyper::service::Service<http::Request<hyper::body::Incoming>, Response = http::Response<B>>,
+    S: hyper::service::Service<http::Request<hyper::body::Incoming>, Response = http::Response<B>>
+        + 'body,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     S::Future: 'static,
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
@@ -236,41 +240,41 @@ mod private {
     pub trait Sealed {}
 
     #[cfg(feature = "http1")]
-    impl<I, B, S> Sealed for hyper::server::conn::http1::Connection<I, S>
+    impl<'body, I, B, S> Sealed for hyper::server::conn::http1::Connection<'body, I, S>
     where
         S: hyper::service::HttpService<hyper::body::Incoming, ResBody = B>,
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
-        B: hyper::body::Body + 'static,
+        B: hyper::body::Body + 'body,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
     }
 
     #[cfg(feature = "http1")]
-    impl<I, B, S> Sealed for hyper::server::conn::http1::UpgradeableConnection<I, S>
+    impl<'body, I, B, S> Sealed for hyper::server::conn::http1::UpgradeableConnection<'body, I, S>
     where
-        S: hyper::service::HttpService<hyper::body::Incoming, ResBody = B>,
+        S: hyper::service::HttpService<hyper::body::Incoming, ResBody = B> + 'body,
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
-        B: hyper::body::Body + 'static,
+        B: hyper::body::Body + 'body,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
     }
 
     #[cfg(feature = "http2")]
-    impl<I, B, S, E> Sealed for hyper::server::conn::http2::Connection<I, S, E>
+    impl<'body, I, B, S, E> Sealed for hyper::server::conn::http2::Connection<'body, I, S, E>
     where
         S: hyper::service::HttpService<hyper::body::Incoming, ResBody = B>,
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
-        B: hyper::body::Body + 'static,
+        B: hyper::body::Body + 'body,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         E: hyper::rt::bounds::Http2ServerConnExec<S::Future, B>,
     {
     }
 
     #[cfg(feature = "server-auto")]
-    impl<I, B, S, E> Sealed for crate::server::conn::auto::Connection<'_, I, S, E>
+    impl<'body, I, B, S, E> Sealed for crate::server::conn::auto::Connection<'_, 'body, I, S, E>
     where
         S: hyper::service::Service<
             http::Request<hyper::body::Incoming>,
@@ -279,14 +283,15 @@ mod private {
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         S::Future: 'static,
         I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
-        B: hyper::body::Body + 'static,
+        B: hyper::body::Body + 'body,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         E: hyper::rt::bounds::Http2ServerConnExec<S::Future, B>,
     {
     }
 
     #[cfg(feature = "server-auto")]
-    impl<I, B, S, E> Sealed for crate::server::conn::auto::UpgradeableConnection<'_, I, S, E>
+    impl<'body, I, B, S, E> Sealed
+        for crate::server::conn::auto::UpgradeableConnection<'_, 'body, I, S, E>
     where
         S: hyper::service::Service<
             http::Request<hyper::body::Incoming>,
@@ -295,7 +300,7 @@ mod private {
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         S::Future: 'static,
         I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
-        B: hyper::body::Body + 'static,
+        B: hyper::body::Body + 'body,
         B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         E: hyper::rt::bounds::Http2ServerConnExec<S::Future, B>,
     {
