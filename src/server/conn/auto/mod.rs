@@ -219,12 +219,16 @@ impl<E> Builder<E> {
     }
 
     /// Bind a connection together with a [`Service`].
-    pub fn serve_connection<I, S, B>(&self, io: I, service: S) -> Connection<'_, I, S, E>
+    pub fn serve_connection<'body, I, S, B>(
+        &self,
+        io: I,
+        service: S,
+    ) -> Connection<'_, 'body, I, S, E>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + 'static,
+        B: Body + 'body,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
         E: HttpServerConnExec<S::Future, B>,
@@ -262,16 +266,16 @@ impl<E> Builder<E> {
     /// instead. See the documentation of the latter to understand why.
     ///
     /// [`hyper_util::server::conn::auto::upgrade::downcast`]: crate::server::conn::auto::upgrade::downcast
-    pub fn serve_connection_with_upgrades<I, S, B>(
+    pub fn serve_connection_with_upgrades<'body, I, S, B>(
         &self,
         io: I,
         service: S,
-    ) -> UpgradeableConnection<'_, I, S, E>
+    ) -> UpgradeableConnection<'_, 'body, I, S, E>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + 'static,
+        B: Body + 'body,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + Send + 'static,
         E: HttpServerConnExec<S::Future, B>,
@@ -387,12 +391,12 @@ pin_project! {
     /// To drive HTTP on this connection this future **must be polled**, typically with
     /// `.await`. If it isn't polled, no progress will be made on this connection.
     #[must_use = "futures do nothing unless polled"]
-    pub struct Connection<'a, I, S, E>
+    pub struct Connection<'a, 'body, I, S, E>
     where
         S: HttpService<Incoming>,
     {
         #[pin]
-        state: ConnState<'a, I, S, E>,
+        state: ConnState<'a, 'body, I, S, E>,
     }
 }
 
@@ -413,20 +417,21 @@ impl<T> std::ops::Deref for Cow<'_, T> {
 }
 
 #[cfg(feature = "http1")]
-type Http1Connection<I, S> = hyper::server::conn::http1::Connection<Rewind<I>, S>;
+type Http1Connection<'body, I, S> = hyper::server::conn::http1::Connection<'body, Rewind<I>, S>;
 
 #[cfg(not(feature = "http1"))]
 type Http1Connection<I, S> = (PhantomData<I>, PhantomData<S>);
 
 #[cfg(feature = "http2")]
-type Http2Connection<I, S, E> = hyper::server::conn::http2::Connection<Rewind<I>, S, E>;
+type Http2Connection<'body, I, S, E> =
+    hyper::server::conn::http2::Connection<'body, Rewind<I>, S, E>;
 
 #[cfg(not(feature = "http2"))]
-type Http2Connection<I, S, E> = (PhantomData<I>, PhantomData<S>, PhantomData<E>);
+type Http2Connection<'body, I, S, E> = (PhantomData<I>, PhantomData<S>, PhantomData<E>);
 
 pin_project! {
     #[project = ConnStateProj]
-    enum ConnState<'a, I, S, E>
+    enum ConnState<'a, 'body, I, S, E>
     where
         S: HttpService<Incoming>,
     {
@@ -438,21 +443,21 @@ pin_project! {
         },
         H1 {
             #[pin]
-            conn: Http1Connection<I, S>,
+            conn: Http1Connection<'body, I, S>,
         },
         H2 {
             #[pin]
-            conn: Http2Connection<I, S, E>,
+            conn: Http2Connection<'body, I, S, E>,
         },
     }
 }
 
-impl<I, S, E, B> Connection<'_, I, S, E>
+impl<'body, I, S, E, B> Connection<'_, 'body, I, S, E>
 where
-    S: HttpService<Incoming, ResBody = B>,
+    S: HttpService<Incoming, ResBody = B> + 'body,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    I: Read + Write + Unpin,
-    B: Body + 'static,
+    I: Read + Write + Unpin + 'body,
+    B: Body + 'body,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
     E: HttpServerConnExec<S::Future, B>,
 {
@@ -477,7 +482,7 @@ where
     }
 
     /// Make this Connection static, instead of borrowing from Builder.
-    pub fn into_owned(self) -> Connection<'static, I, S, E>
+    pub fn into_owned(self) -> Connection<'static, 'body, I, S, E>
     where
         Builder<E>: Clone,
     {
@@ -503,12 +508,12 @@ where
     }
 }
 
-impl<I, S, E, B> Future for Connection<'_, I, S, E>
+impl<'body, I, S, E, B> Future for Connection<'_, 'body, I, S, E>
 where
     S: Service<Request<Incoming>, Response = Response<B>>,
     S::Future: 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    B: Body + 'static,
+    B: Body + 'body,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
     I: Read + Write + Unpin + 'static,
     E: HttpServerConnExec<S::Future, B>,
@@ -564,24 +569,25 @@ pin_project! {
     /// To drive HTTP on this connection this future **must be polled**, typically with
     /// `.await`. If it isn't polled, no progress will be made on this connection.
     #[must_use = "futures do nothing unless polled"]
-    pub struct UpgradeableConnection<'a, I, S, E>
+    pub struct UpgradeableConnection<'a, 'body, I, S, E>
     where
         S: HttpService<Incoming>,
     {
         #[pin]
-        state: UpgradeableConnState<'a, I, S, E>,
+        state: UpgradeableConnState<'a, 'body, I, S, E>,
     }
 }
 
 #[cfg(feature = "http1")]
-type Http1UpgradeableConnection<I, S> = hyper::server::conn::http1::UpgradeableConnection<I, S>;
+type Http1UpgradeableConnection<'body, I, S> =
+    hyper::server::conn::http1::UpgradeableConnection<'body, I, S>;
 
 #[cfg(not(feature = "http1"))]
 type Http1UpgradeableConnection<I, S> = (PhantomData<I>, PhantomData<S>);
 
 pin_project! {
     #[project = UpgradeableConnStateProj]
-    enum UpgradeableConnState<'a, I, S, E>
+    enum UpgradeableConnState<'a, 'body, I, S, E>
     where
         S: HttpService<Incoming>,
     {
@@ -593,21 +599,21 @@ pin_project! {
         },
         H1 {
             #[pin]
-            conn: Http1UpgradeableConnection<Rewind<I>, S>,
+            conn: Http1UpgradeableConnection<'body, Rewind<I>, S>,
         },
         H2 {
             #[pin]
-            conn: Http2Connection<I, S, E>,
+            conn: Http2Connection<'body, I, S, E>,
         },
     }
 }
 
-impl<I, S, E, B> UpgradeableConnection<'_, I, S, E>
+impl<'body, I, S, E, B> UpgradeableConnection<'_, 'body, I, S, E>
 where
-    S: HttpService<Incoming, ResBody = B>,
+    S: HttpService<Incoming, ResBody = B> + 'body,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    I: Read + Write + Unpin,
-    B: Body + 'static,
+    I: Read + Write + Unpin + 'body,
+    B: Body + 'body,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
     E: HttpServerConnExec<S::Future, B>,
 {
@@ -632,7 +638,7 @@ where
     }
 
     /// Make this Connection static, instead of borrowing from Builder.
-    pub fn into_owned(self) -> UpgradeableConnection<'static, I, S, E>
+    pub fn into_owned(self) -> UpgradeableConnection<'static, 'body, I, S, E>
     where
         Builder<E>: Clone,
     {
@@ -658,12 +664,12 @@ where
     }
 }
 
-impl<I, S, E, B> Future for UpgradeableConnection<'_, I, S, E>
+impl<'body, I, S, E, B> Future for UpgradeableConnection<'_, 'body, I, S, E>
 where
-    S: Service<Request<Incoming>, Response = Response<B>>,
+    S: Service<Request<Incoming>, Response = Response<B>> + 'body,
     S::Future: 'static,
     S::Error: Into<Box<dyn StdError + Send + Sync>>,
-    B: Body + 'static,
+    B: Body + 'body,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
     I: Read + Write + Unpin + Send + 'static,
     E: HttpServerConnExec<S::Future, B>,
@@ -913,11 +919,11 @@ impl<E> Http1Builder<'_, E> {
     /// handle HTTP upgrades. This requires that the IO object implements
     /// `Send`.
     #[cfg(feature = "http2")]
-    pub fn serve_connection_with_upgrades<I, S, B>(
+    pub fn serve_connection_with_upgrades<'body, I, S, B>(
         &self,
         io: I,
         service: S,
-    ) -> UpgradeableConnection<'_, I, S, E>
+    ) -> UpgradeableConnection<'_, 'body, I, S, E>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
@@ -1099,12 +1105,12 @@ impl<E> Http2Builder<'_, E> {
     }
 
     /// Bind a connection together with a [`Service`].
-    pub async fn serve_connection<I, S, B>(&self, io: I, service: S) -> Result<()>
+    pub async fn serve_connection<'body, I, S, B>(&self, io: I, service: S) -> Result<()>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + 'static,
+        B: Body + 'body,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + 'static,
         E: HttpServerConnExec<S::Future, B>,
@@ -1115,16 +1121,16 @@ impl<E> Http2Builder<'_, E> {
     /// Bind a connection together with a [`Service`], with the ability to
     /// handle HTTP upgrades. This requires that the IO object implements
     /// `Send`.
-    pub fn serve_connection_with_upgrades<I, S, B>(
+    pub fn serve_connection_with_upgrades<'body, I, S, B>(
         &self,
         io: I,
         service: S,
-    ) -> UpgradeableConnection<'_, I, S, E>
+    ) -> UpgradeableConnection<'_, 'body, I, S, E>
     where
         S: Service<Request<Incoming>, Response = Response<B>>,
         S::Future: 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
-        B: Body + 'static,
+        B: Body + 'body,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
         I: Read + Write + Unpin + Send + 'static,
         E: HttpServerConnExec<S::Future, B>,
