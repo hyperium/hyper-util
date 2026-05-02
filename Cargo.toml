@@ -11,7 +11,7 @@ authors = ["Sean McArthur <sean@seanmonstar.com>"]
 keywords = ["http", "hyper", "hyperium"]
 categories = ["network-programming", "web-programming::http-client", "web-programming::http-server"]
 edition = "2021"
-rust-version = "1.64"
+rust-version = "1.70"
 
 [package.metadata.docs.rs]
 features = ["full"]
@@ -29,7 +29,7 @@ ipnet = { version = "2.9", optional = true }
 libc = { version = "0.2", optional = true }
 percent-encoding = { version = "2.3", optional = true }
 pin-project-lite = "0.2.4"
-socket2 = { version = ">=0.5.9, <0.7", optional = true, features = ["all"] }
+socket2 = { version = ">=0.6.0, <0.7", optional = true, features = ["all"] }
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 tokio = { version = "1", optional = true, default-features = false  }
 tower-layer = { version = "0.3", optional = true }

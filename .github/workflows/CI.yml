@@ -60,7 +60,7 @@ jobs:
     needs: [style]
     strategy:
       matrix:
-        rust: [ 1.64 ] # keep in sync with 'rust-version' in Cargo.toml
+        rust: [ 1.70 ] # keep in sync with 'rust-version' in Cargo.toml
         os:
           - ubuntu-latest
           - windows-latest
