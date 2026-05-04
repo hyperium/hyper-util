@@ -2,7 +2,7 @@ use std::error::Error as StdError;
 use std::future::Future;
 use std::marker::{PhantomData, Unpin};
 use std::pin::Pin;
-use std::task::{self, ready, Poll};
+use std::task::{self, Poll, ready};
 
 use http::{HeaderMap, HeaderValue, Uri};
 use hyper::rt::{Read, Write};
@@ -249,8 +249,8 @@ impl std::fmt::Display for TunnelError {
 impl std::error::Error for TunnelError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            TunnelError::Io(ref e) => Some(e),
-            TunnelError::ConnectFailed(ref e) => Some(&**e),
+            TunnelError::Io(e) => Some(e),
+            TunnelError::ConnectFailed(e) => Some(&**e),
             _ => None,
         }
     }

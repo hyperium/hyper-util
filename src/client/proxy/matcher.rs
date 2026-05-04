@@ -905,25 +905,31 @@ mod tests {
         };
 
         // should bypass proxy (case insensitive match)
-        assert!(p
-            .intercept(&"http://example.com".parse().unwrap())
-            .is_none());
-        assert!(p
-            .intercept(&"http://EXAMPLE.COM".parse().unwrap())
-            .is_none());
-        assert!(p
-            .intercept(&"http://Example.com".parse().unwrap())
-            .is_none());
+        assert!(
+            p.intercept(&"http://example.com".parse().unwrap())
+                .is_none()
+        );
+        assert!(
+            p.intercept(&"http://EXAMPLE.COM".parse().unwrap())
+                .is_none()
+        );
+        assert!(
+            p.intercept(&"http://Example.com".parse().unwrap())
+                .is_none()
+        );
 
         // subdomain should bypass proxy (case insensitive match)
-        assert!(p
-            .intercept(&"http://www.example.com".parse().unwrap())
-            .is_none());
-        assert!(p
-            .intercept(&"http://WWW.EXAMPLE.COM".parse().unwrap())
-            .is_none());
-        assert!(p
-            .intercept(&"http://Www.Example.Com".parse().unwrap())
-            .is_none());
+        assert!(
+            p.intercept(&"http://www.example.com".parse().unwrap())
+                .is_none()
+        );
+        assert!(
+            p.intercept(&"http://WWW.EXAMPLE.COM".parse().unwrap())
+                .is_none()
+        );
+        assert!(
+            p.intercept(&"http://Www.Example.Com".parse().unwrap())
+                .is_none()
+        );
     }
 }

@@ -5,8 +5,8 @@ mod test_utils;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::pin::Pin;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::task::Poll;
 use std::thread;
 use std::time::Duration;
@@ -19,11 +19,11 @@ use http_body_util::BodyExt;
 use http_body_util::{Empty, Full, StreamBody};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use hyper::Request;
 use hyper::body::Bytes;
 use hyper::body::Frame;
-use hyper::Request;
-use hyper_util::client::legacy::connect::{capture_connection, HttpConnector};
 use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::{HttpConnector, capture_connection};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 
 use test_utils::{DebugConnector, DebugStream};
@@ -1017,23 +1017,25 @@ fn connection_poisoning() {
     let num_requests: Arc<AtomicUsize> = Default::default();
     let num_requests_tracker = num_requests.clone();
     let num_conns_tracker = num_conns.clone();
-    thread::spawn(move || loop {
-        let mut sock = server.accept().unwrap().0;
-        num_conns_tracker.fetch_add(1, Ordering::Relaxed);
-        let num_requests_tracker = num_requests_tracker.clone();
-        thread::spawn(move || {
-            sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-            sock.set_write_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut buf = [0; 4096];
-            loop {
-                if sock.read(&mut buf).expect("read 1") > 0 {
-                    num_requests_tracker.fetch_add(1, Ordering::Relaxed);
-                    sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-                        .expect("write 1");
+    thread::spawn(move || {
+        loop {
+            let mut sock = server.accept().unwrap().0;
+            num_conns_tracker.fetch_add(1, Ordering::Relaxed);
+            let num_requests_tracker = num_requests_tracker.clone();
+            thread::spawn(move || {
+                sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                sock.set_write_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut buf = [0; 4096];
+                loop {
+                    if sock.read(&mut buf).expect("read 1") > 0 {
+                        num_requests_tracker.fetch_add(1, Ordering::Relaxed);
+                        sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                            .expect("write 1");
+                    }
                 }
-            }
-        });
+            });
+        }
     });
     let make_request = || {
         Request::builder()

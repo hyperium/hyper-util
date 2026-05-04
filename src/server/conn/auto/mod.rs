@@ -7,7 +7,7 @@ use std::future::Future;
 use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
-use std::task::{ready, Context, Poll};
+use std::task::{Context, Poll, ready};
 use std::{error::Error as StdError, io, time::Duration};
 
 use bytes::Bytes;
@@ -407,7 +407,7 @@ impl<T> std::ops::Deref for Cow<'_, T> {
     fn deref(&self) -> &T {
         match self {
             Cow::Borrowed(t) => &*t,
-            Cow::Owned(ref t) => t,
+            Cow::Owned(t) => t,
         }
     }
 }

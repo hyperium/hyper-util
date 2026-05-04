@@ -9,7 +9,7 @@ use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
-use std::task::{self, ready, Poll};
+use std::task::{self, Poll, ready};
 
 use std::time::{Duration, Instant};
 
@@ -1032,8 +1032,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_pool_checkout_task_unparked() {
-        use futures_util::future::join;
         use futures_util::FutureExt;
+        use futures_util::future::join;
 
         let pool = pool_no_timer();
         let key = host_key("foo");
