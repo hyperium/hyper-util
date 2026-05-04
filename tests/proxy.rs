@@ -4,8 +4,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tower_service::Service;
 
-use hyper_util::client::legacy::connect::proxy::{SocksV4, SocksV5, Tunnel};
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::connect::proxy::{SocksV4, SocksV5, Tunnel};
 
 #[cfg(not(miri))]
 #[tokio::test]

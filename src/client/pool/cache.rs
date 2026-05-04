@@ -22,7 +22,7 @@ mod internal {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex, Weak};
-    use std::task::{self, ready, Poll};
+    use std::task::{self, Poll, ready};
 
     use futures_util::future;
     use tokio::sync::oneshot;

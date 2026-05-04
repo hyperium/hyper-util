@@ -152,7 +152,7 @@ mod internal {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::{Mutex, Weak};
-    use std::task::{self, ready, Poll};
+    use std::task::{self, Poll, ready};
 
     use pin_project_lite::pin_project;
     use tokio::sync::oneshot;

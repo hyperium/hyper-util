@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{self, ready, Poll};
+use std::task::{self, Poll, ready};
 use std::time::Duration;
 
 use futures_util::future::Either;
@@ -17,7 +17,7 @@ use tokio::net::{TcpSocket, TcpStream};
 use tokio::time::Sleep;
 use tracing::{debug, trace, warn};
 
-use super::dns::{self, resolve, GaiResolver, Resolve};
+use super::dns::{self, GaiResolver, Resolve, resolve};
 use super::{Connected, Connection};
 use crate::rt::TokioIo;
 
@@ -114,11 +114,7 @@ impl TcpKeepaliveConfig {
         if let Some(retries) = self.retries {
             ka = Self::ka_with_retries(ka, retries, &mut dirty)
         };
-        if dirty {
-            Some(ka)
-        } else {
-            None
-        }
+        if dirty { Some(ka) } else { None }
     }
 
     #[cfg(
@@ -1169,8 +1165,8 @@ mod tests {
         use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener};
         use std::time::{Duration, Instant};
 
-        use super::dns;
         use super::ConnectingTcp;
+        use super::dns;
 
         let server4 = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = server4.local_addr().unwrap();

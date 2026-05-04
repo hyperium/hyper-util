@@ -152,7 +152,7 @@ impl ProxyReq<'_> {
         let addr_len = match self.0 {
             Address::Socket(SocketAddr::V4(_)) => 1 + 4 + 2,
             Address::Socket(SocketAddr::V6(_)) => 1 + 16 + 2,
-            Address::Domain(ref domain, _) => 1 + 1 + domain.len() + 2,
+            Address::Domain(domain, _) => 1 + 1 + domain.len() + 2,
         };
 
         if buf.capacity() - buf.len() < 3 + addr_len {
