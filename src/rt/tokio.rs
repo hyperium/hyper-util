@@ -107,6 +107,7 @@ where
     Fut: Future + Send + 'static,
     Fut::Output: Send + 'static,
 {
+    #[track_caller]
     fn execute(&self, fut: Fut) {
         #[cfg(feature = "tracing")]
         tokio::spawn(fut.in_current_span());
