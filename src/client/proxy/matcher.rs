@@ -387,6 +387,89 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
     Some(Intercept { uri: dst, auth })
 }
 
+#[cfg(any(test, all(feature = "client-proxy-system", windows)))]
+fn apply_windows_proxy_server(builder: &mut Builder, val: &str) {
+    if let Some(per_scheme) = parse_windows_proxy_server(val) {
+        if builder.http.is_empty() {
+            if let Some(http) = per_scheme.http.or_else(|| per_scheme.socks.clone()) {
+                builder.http = http;
+            }
+        }
+
+        if builder.https.is_empty() {
+            if let Some(https) = per_scheme.https.or(per_scheme.socks) {
+                builder.https = https;
+            }
+        }
+    } else {
+        if builder.http.is_empty() {
+            builder.http = val.to_owned();
+        }
+        if builder.https.is_empty() {
+            builder.https = val.to_owned();
+        }
+    }
+}
+
+#[cfg(any(test, all(feature = "client-proxy-system", windows)))]
+#[derive(Default)]
+struct WindowsProxyServer {
+    http: Option<String>,
+    https: Option<String>,
+    socks: Option<String>,
+}
+
+#[cfg(any(test, all(feature = "client-proxy-system", windows)))]
+fn parse_windows_proxy_server(val: &str) -> Option<WindowsProxyServer> {
+    let mut per_scheme = WindowsProxyServer::default();
+    let mut saw_per_scheme_entry = false;
+
+    for part in val
+        .split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        let Some((scheme, proxy)) = part.split_once('=') else {
+            continue;
+        };
+        let scheme = scheme.trim();
+
+        // Avoid treating a single proxy URI containing `=` in its authority as a
+        // WinINET per-scheme entry.
+        if !scheme.bytes().all(|b| b.is_ascii_alphabetic()) {
+            continue;
+        }
+
+        saw_per_scheme_entry = true;
+        let proxy = proxy.trim();
+        if proxy.is_empty() {
+            continue;
+        }
+
+        match scheme.to_ascii_lowercase().as_str() {
+            "http" => per_scheme.http = Some(proxy.to_owned()),
+            "https" => per_scheme.https = Some(proxy.to_owned()),
+            "socks" => per_scheme.socks = Some(normalize_windows_socks_proxy(proxy)),
+            _ => {}
+        }
+    }
+
+    saw_per_scheme_entry.then_some(per_scheme)
+}
+
+#[cfg(any(test, all(feature = "client-proxy-system", windows)))]
+fn normalize_windows_socks_proxy(proxy: &str) -> String {
+    if let Some((scheme, rest)) = proxy.split_once("://") {
+        if scheme.eq_ignore_ascii_case("socks") {
+            format!("socks5://{rest}")
+        } else {
+            proxy.to_owned()
+        }
+    } else {
+        format!("socks5://{proxy}")
+    }
+}
+
 fn encode_basic_auth(user: &str, pass: Option<&str>) -> HeaderValue {
     use base64::prelude::BASE64_STANDARD;
     use base64::write::EncoderWriter;
@@ -676,12 +759,7 @@ mod win {
         }
 
         if let Ok(val) = settings.get_string("ProxyServer") {
-            if builder.http.is_empty() {
-                builder.http = val.clone();
-            }
-            if builder.https.is_empty() {
-                builder.https = val;
-            }
+            super::apply_windows_proxy_server(builder, &val);
         }
 
         if builder.no.is_empty() {
@@ -895,6 +973,90 @@ mod tests {
         assert!(matcher.contains("www.foo.bar"));
         assert!(matcher.contains("WWW.FOO.BAR"));
         assert!(matcher.contains("Www.Foo.Bar"));
+    }
+
+    #[test]
+    fn test_windows_proxy_server_per_scheme() {
+        let mut builder = Builder::default();
+        apply_windows_proxy_server(
+            &mut builder,
+            "http=127.0.0.1:8080;https=127.0.0.1:8443;ftp=127.0.0.1:8021",
+        );
+        let p = builder.build();
+
+        assert_eq!(
+            intercept(&p, "http://example.local").uri(),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(
+            intercept(&p, "https://example.local").uri(),
+            "http://127.0.0.1:8443"
+        );
+    }
+
+    #[test]
+    fn test_windows_proxy_server_socks_applies_to_all() {
+        let mut builder = Builder::default();
+        apply_windows_proxy_server(&mut builder, "socks=127.0.0.1:1080");
+        let p = builder.build();
+
+        assert_eq!(
+            intercept(&p, "http://example.local").uri(),
+            "socks5://127.0.0.1:1080"
+        );
+        assert_eq!(
+            intercept(&p, "https://example.local").uri(),
+            "socks5://127.0.0.1:1080"
+        );
+    }
+
+    #[test]
+    fn test_windows_proxy_server_socks_fallback_respects_specific_entries() {
+        let mut builder = Builder::default();
+        apply_windows_proxy_server(&mut builder, "http=127.0.0.1:8080;socks=127.0.0.1:1080");
+        let p = builder.build();
+
+        assert_eq!(
+            intercept(&p, "http://example.local").uri(),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(
+            intercept(&p, "https://example.local").uri(),
+            "socks5://127.0.0.1:1080"
+        );
+    }
+
+    #[test]
+    fn test_windows_proxy_server_preserves_existing_values() {
+        let mut builder = Builder::default();
+        builder.http = "http://env.local:8000".into();
+        apply_windows_proxy_server(&mut builder, "http=system.local:8080;socks=127.0.0.1:1080");
+        let p = builder.build();
+
+        assert_eq!(
+            intercept(&p, "http://example.local").uri(),
+            "http://env.local:8000"
+        );
+        assert_eq!(
+            intercept(&p, "https://example.local").uri(),
+            "socks5://127.0.0.1:1080"
+        );
+    }
+
+    #[test]
+    fn test_windows_proxy_server_ignores_unknown_entries() {
+        let mut builder = Builder::default();
+        apply_windows_proxy_server(&mut builder, "ftp=127.0.0.1:8021");
+        let p = builder.build();
+
+        assert!(
+            p.intercept(&"http://example.local".parse().unwrap())
+                .is_none()
+        );
+        assert!(
+            p.intercept(&"https://example.local".parse().unwrap())
+                .is_none()
+        );
     }
 
     #[test]
