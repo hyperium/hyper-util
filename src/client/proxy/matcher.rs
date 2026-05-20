@@ -50,6 +50,7 @@ pub struct Builder {
     http: String,
     https: String,
     no: String,
+    no_local: bool,
 }
 
 #[derive(Clone)]
@@ -66,6 +67,7 @@ enum Auth {
 struct NoProxy {
     ips: IpMatcher,
     domains: DomainMatcher,
+    local_names: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -232,6 +234,7 @@ impl Builder {
             http: get_first_env(&["HTTP_PROXY", "http_proxy"]),
             https: get_first_env(&["HTTPS_PROXY", "https_proxy"]),
             no: get_first_env(&["NO_PROXY", "no_proxy"]),
+            no_local: false,
         }
     }
 
@@ -315,7 +318,7 @@ impl Builder {
         Matcher {
             http: parse_env_uri(&self.http).or_else(|| all.clone()),
             https: parse_env_uri(&self.https).or(all),
-            no: NoProxy::from_string(&self.no),
+            no: NoProxy::from_string(&self.no).with_local_names(self.no_local),
         }
     }
 }
@@ -420,6 +423,7 @@ impl NoProxy {
         NoProxy {
             ips: IpMatcher(Vec::new()),
             domains: DomainMatcher(Vec::new()),
+            local_names: false,
         }
     }
 
@@ -463,6 +467,7 @@ impl NoProxy {
         NoProxy {
             ips: IpMatcher(ips),
             domains: DomainMatcher(domains),
+            local_names: false,
         }
     }
 
@@ -479,12 +484,17 @@ impl NoProxy {
         match host.parse::<IpAddr>() {
             // If we can parse an IP addr, then use it, otherwise, assume it is a domain
             Ok(ip) => self.ips.contains(ip),
-            Err(_) => self.domains.contains(host),
+            Err(_) => self.local_names && !host.contains('.') || self.domains.contains(host),
         }
     }
 
     fn is_empty(&self) -> bool {
-        self.ips.0.is_empty() && self.domains.0.is_empty()
+        self.ips.0.is_empty() && self.domains.0.is_empty() && !self.local_names
+    }
+
+    fn with_local_names(mut self, local_names: bool) -> Self {
+        self.local_names = local_names;
+        self
     }
 }
 
@@ -662,6 +672,22 @@ mod mac {
 #[cfg(feature = "client-proxy-system")]
 #[cfg(windows)]
 mod win {
+    const LOOPBACK_BYPASS: [&str; 4] = ["localhost", "loopback", "127.0.0.1", "::1"];
+
+    struct ProxyOverride {
+        no: String,
+        no_local: bool,
+    }
+
+    impl Default for ProxyOverride {
+        fn default() -> Self {
+            Self {
+                no: LOOPBACK_BYPASS.join(","),
+                no_local: false,
+            }
+        }
+    }
+
     pub(super) fn with_system(builder: &mut super::Builder) {
         let settings = if let Ok(settings) = windows_registry::CURRENT_USER
             .open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
@@ -685,14 +711,60 @@ mod win {
         }
 
         if builder.no.is_empty() {
-            if let Ok(val) = settings.get_string("ProxyOverride") {
-                builder.no = val
-                    .split(';')
-                    .map(|s| s.trim())
-                    .collect::<Vec<&str>>()
-                    .join(",")
-                    .replace("*.", "");
-            }
+            let proxy_override = settings
+                .get_string("ProxyOverride")
+                .map(|val| parse_proxy_override(&val))
+                .unwrap_or_default();
+            builder.no = proxy_override.no;
+            builder.no_local = proxy_override.no_local;
+        }
+    }
+
+    fn parse_proxy_override(val: &str) -> ProxyOverride {
+        let mut no_local = false;
+        let mut disable_loopback_bypass = false;
+        let mut no = val
+            .split(';')
+            .map(str::trim)
+            .filter_map(|part| {
+                if part.is_empty() {
+                    None
+                } else if part.eq_ignore_ascii_case("<local>") {
+                    no_local = true;
+                    None
+                } else if part.eq_ignore_ascii_case("<-loopback>") {
+                    disable_loopback_bypass = true;
+                    None
+                } else {
+                    Some(part)
+                }
+            })
+            .collect::<Vec<&str>>();
+
+        if !disable_loopback_bypass {
+            no.extend(LOOPBACK_BYPASS.iter());
+        }
+
+        ProxyOverride { no: no.join(",").replace("*.", ""), no_local }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn test_parse_proxy_override_macros() {
+            let rules =
+                super::parse_proxy_override("*.example.com; <local>; <-loopback>; 10.0.0.1 ;");
+
+            assert_eq!(rules.no, "example.com,10.0.0.1");
+            assert!(rules.no_local);
+        }
+
+        #[test]
+        fn test_parse_proxy_override_defaults_loopback() {
+            let rules = super::parse_proxy_override("*.example.com");
+
+            assert_eq!(rules.no, "example.com,localhost,loopback,127.0.0.1,::1");
+            assert!(!rules.no_local);
         }
     }
 }
@@ -931,5 +1003,22 @@ mod tests {
             p.intercept(&"http://Www.Example.Com".parse().unwrap())
                 .is_none()
         );
+    }
+
+    #[test]
+    fn test_no_proxy_local_names() {
+        let mut builder = Matcher::builder();
+        builder.all = "http://proxy.local".into();
+        builder.no_local = true;
+        let p = builder.build();
+
+        assert!(p.intercept(&"http://webserver".parse().unwrap()).is_none());
+        assert!(p.intercept(&"http://INTRANET".parse().unwrap()).is_none());
+
+        assert!(p
+            .intercept(&"http://webserver.example.com".parse().unwrap())
+            .is_some());
+        assert!(p.intercept(&"http://10.0.0.1".parse().unwrap()).is_some());
+        assert!(p.intercept(&"http://[::1]".parse().unwrap()).is_some());
     }
 }
