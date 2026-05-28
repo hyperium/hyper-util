@@ -676,12 +676,7 @@ mod win {
         }
 
         if let Ok(val) = settings.get_string("ProxyServer") {
-            if builder.http.is_empty() {
-                builder.http = val.clone();
-            }
-            if builder.https.is_empty() {
-                builder.https = val;
-            }
+            apply_proxy_server(builder, &val);
         }
 
         if builder.no.is_empty() {
@@ -693,6 +688,75 @@ mod win {
                     .join(",")
                     .replace("*.", "");
             }
+        }
+    }
+
+    pub(super) fn apply_proxy_server(builder: &mut super::Builder, val: &str) {
+        if let Some(map) = ProxyServerMap::parse(val) {
+            if builder.http.is_empty() {
+                if let Some(http) = map.http.or_else(|| map.socks.clone()) {
+                    builder.http = http;
+                }
+            }
+            if builder.https.is_empty() {
+                if let Some(https) = map.https.or(map.socks) {
+                    builder.https = https;
+                }
+            }
+        } else {
+            if builder.http.is_empty() {
+                builder.http = val.to_owned();
+            }
+            if builder.https.is_empty() {
+                builder.https = val.to_owned();
+            }
+        }
+    }
+
+    struct ProxyServerMap {
+        http: Option<String>,
+        https: Option<String>,
+        socks: Option<String>,
+    }
+
+    impl ProxyServerMap {
+        fn parse(val: &str) -> Option<Self> {
+            if !val.contains('=') {
+                return None;
+            }
+
+            let mut map = Self {
+                http: None,
+                https: None,
+                socks: None,
+            };
+
+            for item in val.split(';') {
+                let Some((scheme, proxy)) = item.split_once('=') else {
+                    continue;
+                };
+                let proxy = proxy.trim();
+                if proxy.is_empty() {
+                    continue;
+                }
+
+                match scheme.trim().to_ascii_lowercase().as_str() {
+                    "http" => map.http = Some(proxy.to_owned()),
+                    "https" => map.https = Some(proxy.to_owned()),
+                    "socks" => map.socks = Some(normalize_socks_proxy(proxy)),
+                    _ => {}
+                }
+            }
+
+            Some(map)
+        }
+    }
+
+    fn normalize_socks_proxy(proxy: &str) -> String {
+        if proxy.contains("://") {
+            proxy.to_owned()
+        } else {
+            format!("socks4://{proxy}")
         }
     }
 }
@@ -881,6 +945,66 @@ mod tests {
         let m = builder.build();
 
         assert!(m.intercept(&"http://rick.roll".parse().unwrap()).is_none());
+    }
+
+    #[cfg(all(feature = "client-proxy-system", windows))]
+    #[test]
+    fn test_windows_proxy_server_per_scheme() {
+        let mut builder = Builder::default();
+        win::apply_proxy_server(
+            &mut builder,
+            "http=127.0.0.1:8080;https=127.0.0.1:8443;ftp=127.0.0.1:2121",
+        );
+
+        let p = builder.build();
+        assert_eq!(
+            intercept(&p, "http://example.local").uri(),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(
+            intercept(&p, "https://example.local").uri(),
+            "http://127.0.0.1:8443"
+        );
+    }
+
+    #[cfg(all(feature = "client-proxy-system", windows))]
+    #[test]
+    fn test_windows_proxy_server_socks_fills_missing_schemes() {
+        let mut builder = Builder::default();
+        win::apply_proxy_server(&mut builder, "socks=127.0.0.1:1080");
+
+        let p = builder.build();
+        assert_eq!(
+            intercept(&p, "http://example.local").uri(),
+            "socks4://127.0.0.1:1080"
+        );
+        assert_eq!(
+            intercept(&p, "https://example.local").uri(),
+            "socks4://127.0.0.1:1080"
+        );
+    }
+
+    #[cfg(all(feature = "client-proxy-system", windows))]
+    #[test]
+    fn test_windows_proxy_server_keeps_env_overrides() {
+        let mut builder = Builder {
+            http: "http://env.local:8080".into(),
+            ..Builder::default()
+        };
+        win::apply_proxy_server(
+            &mut builder,
+            "http=system.local:8080;https=system.local:8443",
+        );
+
+        let p = builder.build();
+        assert_eq!(
+            intercept(&p, "http://example.local").uri(),
+            "http://env.local:8080"
+        );
+        assert_eq!(
+            intercept(&p, "https://example.local").uri(),
+            "http://system.local:8443"
+        );
     }
 
     #[test]
