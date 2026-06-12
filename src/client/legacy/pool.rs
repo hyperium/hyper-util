@@ -805,6 +805,11 @@ impl<T: Poolable + 'static, K: Key> IdleTask<T, K> {
                         if let Ok(mut inner) = inner.lock() {
                             trace!("idle interval checking for expired");
                             inner.clear_expired();
+                            if inner.idle.is_empty() {
+                                inner.idle_interval_ref = None;
+                                trace!("pool empty, canceling idle interval");
+                                return;
+                            }
                         }
                     }
 
