@@ -103,7 +103,7 @@ where
             return self
                 .mk_svc
                 .poll_ready(cx)
-                .map_err(|e| SingletonError(e.into()));
+                .map_err(|e| SingletonError::new(e.into()));
         }
         Poll::Ready(Ok(()))
     }
@@ -151,7 +151,7 @@ where
 mod internal {
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::{Mutex, Weak};
+    use std::sync::{Arc, Mutex, Weak};
     use std::task::{self, Poll, ready};
 
     use pin_project_lite::pin_project;
@@ -169,7 +169,7 @@ mod internal {
                 singleton: DitchGuard<S>,
             },
             Waiting {
-                rx: oneshot::Receiver<S>,
+                rx: oneshot::Receiver<Result<S, SharedError>>,
                 state: Weak<Mutex<State<S>>>,
             },
             Made {
@@ -183,7 +183,7 @@ mod internal {
     #[derive(Debug)]
     pub enum State<S> {
         Empty,
-        Making(Vec<oneshot::Sender<S>>),
+        Making(Vec<oneshot::Sender<Result<S, SharedError>>>),
         Made(S),
     }
 
@@ -227,7 +227,7 @@ mod internal {
                                 match std::mem::replace(&mut *locked, State::Made(svc.clone())) {
                                     State::Making(waiters) => {
                                         for tx in waiters {
-                                            let _ = tx.send(svc.clone());
+                                            let _ = tx.send(Ok(svc.clone()));
                                         }
                                     }
                                     State::Empty | State::Made(_) => {
@@ -241,18 +241,32 @@ mod internal {
                             Poll::Ready(Ok(Singled::new(svc, state)))
                         }
                         Err(e) => {
+                            let e = box_error_into_shared(e.into());
                             if let Some(state) = singleton.0.upgrade() {
                                 let mut locked = state.lock().unwrap();
                                 singleton.0 = Weak::new();
-                                *locked = State::Empty;
+                                match std::mem::replace(&mut *locked, State::Empty) {
+                                    State::Making(waiters) => {
+                                        for tx in waiters {
+                                            let _ = tx.send(Err(e.clone()));
+                                        }
+                                    }
+                                    State::Empty | State::Made(_) => {
+                                        // shouldn't happen!
+                                        unreachable!()
+                                    }
+                                }
                             }
-                            Poll::Ready(Err(SingletonError(e.into())))
+                            Poll::Ready(Err(SingletonError(e)))
                         }
                     }
                 }
                 SingletonFutureProj::Waiting { rx, state } => match ready!(Pin::new(rx).poll(cx)) {
-                    Ok(svc) => Poll::Ready(Ok(Singled::new(svc, state.clone()))),
-                    Err(_canceled) => Poll::Ready(Err(SingletonError(Canceled.into()))),
+                    Ok(Ok(svc)) => Poll::Ready(Ok(Singled::new(svc, state.clone()))),
+                    Ok(Err(e)) => Poll::Ready(Err(SingletonError(e))),
+                    Err(_canceled) => {
+                        Poll::Ready(Err(SingletonError(box_error_into_shared(Canceled.into()))))
+                    }
                 },
                 SingletonFutureProj::Made { svc, state } => {
                     Poll::Ready(Ok(Singled::new(svc.take().unwrap(), state.clone())))
@@ -307,7 +321,13 @@ mod internal {
     // Box<dyn Error>, we can _change_ the type once we no longer need the Canceled
     // error type. This will be possible with the refactor to baton passing.
     #[derive(Debug)]
-    pub struct SingletonError(pub(super) BoxError);
+    pub struct SingletonError(pub(super) SharedError);
+
+    impl SingletonError {
+        pub(super) fn new(error: BoxError) -> Self {
+            SingletonError(box_error_into_shared(error))
+        }
+    }
 
     impl std::fmt::Display for SingletonError {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -319,6 +339,12 @@ mod internal {
         fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
             Some(&*self.0)
         }
+    }
+
+    type SharedError = Arc<dyn std::error::Error + Send + Sync>;
+
+    fn box_error_into_shared(error: BoxError) -> SharedError {
+        error.into()
     }
 
     #[derive(Debug)]
@@ -335,6 +361,7 @@ mod internal {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error;
     use std::future::Future;
     use std::pin::Pin;
     use std::task::Poll;
@@ -460,6 +487,38 @@ mod tests {
         send_response.send_response("svc");
 
         fut1.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn maker_error_is_shared_with_waiters() {
+        let (mock_svc, mut handle) = tower_test::mock::pair::<(), &'static str>();
+        let mut singleton = Singleton::new(mock_svc);
+
+        std::future::poll_fn(|cx| singleton.poll_ready(cx))
+            .await
+            .unwrap();
+
+        let fut1 = singleton.call(());
+        let fut2 = singleton.call(());
+        let fut3 = singleton.call(());
+
+        let ((), send_response) = handle.next_request().await.unwrap();
+        send_response.send_error(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "maker failed",
+        ));
+
+        let err1 = fut1.await.unwrap_err();
+        let err2 = fut2.await.unwrap_err();
+        let err3 = fut3.await.unwrap_err();
+
+        let src1 = err1.source().expect("driver source");
+        let src2 = err2.source().expect("waiter source");
+        let src3 = err3.source().expect("waiter source");
+
+        assert_eq!(src1.to_string(), "maker failed");
+        assert!(std::ptr::addr_eq(src1, src2));
+        assert!(std::ptr::addr_eq(src1, src3));
     }
 
     // TODO: this should be able to be improved with a cooperative baton refactor
