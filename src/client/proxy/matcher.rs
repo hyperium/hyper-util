@@ -242,6 +242,9 @@ impl Builder {
         #[cfg(all(feature = "client-proxy-system", target_os = "macos"))]
         mac::with_system(&mut builder);
 
+        #[cfg(all(feature = "client-proxy-system", target_os = "ios"))]
+        ios::with_system(&mut builder);
+
         #[cfg(all(feature = "client-proxy-system", windows))]
         win::with_system(&mut builder);
 
@@ -656,6 +659,86 @@ mod mac {
         }
 
         None
+    }
+}
+
+#[cfg(feature = "client-proxy-system")]
+#[cfg(target_os = "ios")]
+mod ios {
+    use core_foundation::base::{CFType, CFTypeRef, TCFType};
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::{CFString, CFStringRef};
+
+    #[link(name = "CFNetwork", kind = "framework")]
+    unsafe extern "C" {
+        fn CFNetworkCopySystemProxySettings() -> CFTypeRef;
+        static kCFNetworkProxiesHTTPEnable: CFStringRef;
+        static kCFNetworkProxiesHTTPProxy: CFStringRef;
+        static kCFNetworkProxiesHTTPPort: CFStringRef;
+        static kCFNetworkProxiesHTTPSEnable: CFStringRef;
+        static kCFNetworkProxiesHTTPSProxy: CFStringRef;
+        static kCFNetworkProxiesHTTPSPort: CFStringRef;
+    }
+
+    pub(super) fn with_system(builder: &mut super::Builder) {
+        unsafe {
+            let raw = CFNetworkCopySystemProxySettings();
+            if raw.is_null() {
+                return;
+            }
+            let dict: CFDictionary<CFString, CFType> =
+                CFDictionary::wrap_under_create_rule(raw as _);
+            if builder.http.is_empty() {
+                if let Some(proxy) = parse_proxy(
+                    &dict,
+                    kCFNetworkProxiesHTTPEnable,
+                    kCFNetworkProxiesHTTPProxy,
+                    kCFNetworkProxiesHTTPPort,
+                ) {
+                    builder.http = proxy;
+                }
+            }
+            if builder.https.is_empty() {
+                if let Some(proxy) = parse_proxy(
+                    &dict,
+                    kCFNetworkProxiesHTTPSEnable,
+                    kCFNetworkProxiesHTTPSProxy,
+                    kCFNetworkProxiesHTTPSPort,
+                ) {
+                    builder.https = proxy;
+                }
+            }
+        }
+    }
+
+    fn parse_proxy(
+        dict: &CFDictionary<CFString, CFType>,
+        enable_key: CFStringRef,
+        host_key: CFStringRef,
+        port_key: CFStringRef,
+    ) -> Option<String> {
+        let enabled = dict
+            .find(enable_key)
+            .and_then(|v| v.downcast::<CFNumber>())
+            .and_then(|n| n.to_i32())
+            .unwrap_or(0)
+            == 1;
+        if !enabled {
+            return None;
+        }
+        let host = dict
+            .find(host_key)
+            .and_then(|v| v.downcast::<CFString>())
+            .map(|s| s.to_string())?;
+        let port = dict
+            .find(port_key)
+            .and_then(|v| v.downcast::<CFNumber>())
+            .and_then(|n| n.to_i32());
+        Some(match port {
+            Some(p) => format!("{host}:{p}"),
+            None => host,
+        })
     }
 }
 
