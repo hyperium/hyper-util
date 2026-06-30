@@ -18,6 +18,7 @@ pub use self::internal::Cached;
 // more public, but we can't change type shapes (generics) once things are
 // public.
 mod internal {
+    use std::collections::VecDeque;
     use std::fmt;
     use std::future::Future;
     use std::pin::Pin;
@@ -108,7 +109,7 @@ mod internal {
     #[derive(Debug)]
     pub struct Shared<S> {
         services: Vec<S>,
-        waiters: Vec<oneshot::Sender<S>>,
+        waiters: VecDeque<oneshot::Sender<S>>,
     }
 
     // impl Builder
@@ -149,7 +150,7 @@ mod internal {
                 events: self.events,
                 shared: Arc::new(Mutex::new(Shared {
                     services: Vec::new(),
-                    waiters: Vec::new(),
+                    waiters: VecDeque::new(),
                 })),
             }
         }
@@ -205,7 +206,7 @@ mod internal {
                 }
 
                 let (tx, rx) = oneshot::channel();
-                locked.waiters.push(tx);
+                locked.waiters.push_back(tx);
                 rx
             };
 
@@ -363,7 +364,7 @@ mod internal {
     impl<V> Shared<V> {
         fn put(&mut self, val: V) {
             let mut val = Some(val);
-            while let Some(tx) = self.waiters.pop() {
+            while let Some(tx) = self.waiters.pop_front() {
                 if !tx.is_closed() {
                     match tx.send(val.take().unwrap()) {
                         Ok(()) => break,
@@ -490,5 +491,73 @@ mod tests {
         let f = cache.call(1);
         let cached = f.await.expect("call");
         drop(cached);
+    }
+
+    // A returned connection is handed to waiters in the order they parked
+    // (FIFO), so a waiter cannot be starved by later arrivals.
+    #[tokio::test]
+    async fn test_waiters_woken_in_fifo_order() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+
+        let (mock, mut handle) = tower_test::mock::pair::<u32, &'static str>();
+        let mut cache = super::builder().build(mock);
+        handle.allow(16);
+
+        // Establish one connection and hold it, so the next checkouts find no
+        // idle service and park.
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let held = future::join(cache.call(0), async {
+            assert_request_eq!(handle, 0).send_response("conn");
+        })
+        .await
+        .0
+        .expect("call");
+
+        // Park three checkouts in order. Each misses and starts a connect, but
+        // the connect is never completed, so each parks on its waiter.
+        let mut cx = Context::from_waker(Waker::noop());
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut first = Box::pin(cache.call(1));
+        assert!(first.as_mut().poll(&mut cx).is_pending());
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut second = Box::pin(cache.call(2));
+        assert!(second.as_mut().poll(&mut cx).is_pending());
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut third = Box::pin(cache.call(3));
+        assert!(third.as_mut().poll(&mut cx).is_pending());
+
+        // Returning the connection wakes the oldest waiter first.
+        drop(held);
+        let first = match first.as_mut().poll(&mut cx) {
+            Poll::Ready(r) => r.expect("first"),
+            Poll::Pending => panic!("oldest waiter was not woken first"),
+        };
+        assert!(second.as_mut().poll(&mut cx).is_pending());
+        assert!(third.as_mut().poll(&mut cx).is_pending());
+
+        // Returning it again wakes the next-oldest, then the last.
+        drop(first);
+        let second = match second.as_mut().poll(&mut cx) {
+            Poll::Ready(r) => r.expect("second"),
+            Poll::Pending => panic!("second waiter was not woken next"),
+        };
+        assert!(third.as_mut().poll(&mut cx).is_pending());
+
+        drop(second);
+        match third.as_mut().poll(&mut cx) {
+            Poll::Ready(r) => {
+                r.expect("third");
+            }
+            Poll::Pending => panic!("last waiter was not woken"),
+        }
     }
 }
