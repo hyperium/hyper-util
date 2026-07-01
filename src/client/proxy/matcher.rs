@@ -662,6 +662,66 @@ mod mac {
 #[cfg(feature = "client-proxy-system")]
 #[cfg(windows)]
 mod win {
+
+    struct WindowsProxy {
+        http: Option<String>,
+        https: Option<String>,
+        all: Option<String>,
+    }
+
+    const HTTP_SCHEME: &str = "http";
+    const HTTPS_SCHEME: &str = "https";
+    const SOCKS_SCHEME: &str = "socks";
+
+    const SOCKS_WINDOWS_MAP_TO: &str = "socks5";
+
+    impl WindowsProxy {
+        fn uri_from_schema_and_authority(scheme: &str, authority: &str) -> String {
+            let safe_authority = authority
+                .split_once("://")
+                .map(|(_scheme, authority)| authority)
+                .unwrap_or(authority);
+            format!("{scheme}://{safe_authority}")
+        }
+
+        fn from_proxy_server_setting(proxy_server_setting: &str) -> Self {
+            let mut http = None;
+            let mut https = None;
+            let mut all = None;
+            for proxy in proxy_server_setting
+                .split(';')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+            {
+                let schema_authority = proxy
+                    .split_once('=')
+                    .map(|(a, b)| (Some(a), Some(b)))
+                    .unwrap_or((None, None));
+                match schema_authority {
+                    (Some(HTTP_SCHEME), Some(authority)) => http = Some(authority.to_owned()),
+                    (Some(HTTPS_SCHEME), Some(authority)) => https = Some(authority.to_owned()),
+                    (Some(SOCKS_SCHEME), Some(authority)) => {
+                        all = Some(Self::uri_from_schema_and_authority(
+                            SOCKS_WINDOWS_MAP_TO,
+                            authority,
+                        ))
+                    }
+                    // What to do if a non-schemed proxy is there? Set all, or http and https
+                    // Lets set all so http and https can override later on Matcher's build
+                    (None, None) => all = Some(proxy.into()),
+                    _ => {}
+                }
+            }
+            Self { http, https, all }
+        }
+    }
+
+    impl From<String> for WindowsProxy {
+        fn from(value: String) -> Self {
+            Self::from_proxy_server_setting(value.as_str())
+        }
+    }
+
     pub(super) fn with_system(builder: &mut super::Builder) {
         let settings = if let Ok(settings) = windows_registry::CURRENT_USER
             .open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
@@ -676,11 +736,21 @@ mod win {
         }
 
         if let Ok(val) = settings.get_string("ProxyServer") {
-            if builder.http.is_empty() {
-                builder.http = val.clone();
+            let windows_proxy: WindowsProxy = val.into();
+            if let Some(val) = windows_proxy.http {
+                if builder.http.is_empty() {
+                    builder.http = val;
+                }
             }
-            if builder.https.is_empty() {
-                builder.https = val;
+            if let Some(val) = windows_proxy.https {
+                if builder.https.is_empty() {
+                    builder.https = val;
+                }
+            }
+            if let Some(val) = windows_proxy.all {
+                if builder.all.is_empty() {
+                    builder.all = val;
+                }
             }
         }
 
@@ -693,6 +763,86 @@ mod win {
                     .join(",")
                     .replace("*.", "");
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::WindowsProxy;
+
+        #[test]
+        fn per_scheme_values_go_to_their_own_slots() {
+            let proxy =
+                WindowsProxy::from_proxy_server_setting("http=127.0.0.1:8080;https=127.0.0.1:8443");
+            assert_eq!(proxy.http.as_deref(), Some("127.0.0.1:8080"));
+            assert_eq!(proxy.https.as_deref(), Some("127.0.0.1:8443"));
+            assert_eq!(proxy.all, None);
+        }
+
+        #[test]
+        fn socks_is_normalized_to_socks5_and_stored_as_all() {
+            let proxy = WindowsProxy::from_proxy_server_setting("socks=127.0.0.1:1080");
+            assert_eq!(proxy.http, None);
+            assert_eq!(proxy.https, None);
+            assert_eq!(proxy.all.as_deref(), Some("socks5://127.0.0.1:1080"));
+        }
+
+        #[test]
+        fn socks_with_existing_scheme_is_rewritten_to_socks5() {
+            let proxy = WindowsProxy::from_proxy_server_setting("socks=socks://127.0.0.1:1080");
+            assert_eq!(proxy.all.as_deref(), Some("socks5://127.0.0.1:1080"));
+        }
+
+        #[test]
+        fn all_schemes_together() {
+            let proxy = WindowsProxy::from_proxy_server_setting(
+                "http=10.0.0.1:8080;https=10.0.0.1:8443;socks=10.0.0.1:1080",
+            );
+            assert_eq!(proxy.http.as_deref(), Some("10.0.0.1:8080"));
+            assert_eq!(proxy.https.as_deref(), Some("10.0.0.1:8443"));
+            assert_eq!(proxy.all.as_deref(), Some("socks5://10.0.0.1:1080"));
+        }
+
+        #[test]
+        fn single_proxy_without_scheme_goes_to_all() {
+            let proxy = WindowsProxy::from_proxy_server_setting("127.0.0.1:8080");
+            assert_eq!(proxy.http, None);
+            assert_eq!(proxy.https, None);
+            assert_eq!(proxy.all.as_deref(), Some("127.0.0.1:8080"));
+        }
+
+        #[test]
+        fn unknown_schemes_are_ignored() {
+            let proxy = WindowsProxy::from_proxy_server_setting("ftp=127.0.0.1:8021");
+            assert_eq!(proxy.http, None);
+            assert_eq!(proxy.https, None);
+            assert_eq!(proxy.all, None);
+        }
+
+        #[test]
+        fn whitespace_and_empty_segments_are_ignored() {
+            let proxy = WindowsProxy::from_proxy_server_setting("  http=127.0.0.1:8080 ; ; ");
+            assert_eq!(proxy.http.as_deref(), Some("127.0.0.1:8080"));
+            assert_eq!(proxy.https, None);
+            assert_eq!(proxy.all, None);
+        }
+
+        #[test]
+        fn trailing_separator_does_not_clobber_socks() {
+            let proxy = WindowsProxy::from_proxy_server_setting("socks=127.0.0.1:1080;");
+            assert_eq!(proxy.all.as_deref(), Some("socks5://127.0.0.1:1080"));
+        }
+
+        #[test]
+        fn uri_from_schema_and_authority_strips_existing_scheme() {
+            assert_eq!(
+                WindowsProxy::uri_from_schema_and_authority("socks5", "127.0.0.1:1080"),
+                "socks5://127.0.0.1:1080"
+            );
+            assert_eq!(
+                WindowsProxy::uri_from_schema_and_authority("socks5", "socks://127.0.0.1:1080"),
+                "socks5://127.0.0.1:1080"
+            );
         }
     }
 }
