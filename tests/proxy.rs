@@ -39,6 +39,87 @@ async fn test_tunnel_works() {
     t2.await.expect("task 2");
 }
 
+// REPRO: proxy sends the "200 OK" status line and header terminator in two
+// separate writes (simulating two TCP segments arriving as separate reads).
+// This should still succeed since the full response is well-formed HTTP,
+// just split across reads.
+#[cfg(not(miri))]
+#[tokio::test]
+async fn test_tunnel_works_with_split_response() {
+    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = tcp.local_addr().expect("local_addr");
+
+    let proxy_dst = format!("http://{addr}").parse().expect("uri");
+    let mut connector = Tunnel::new(proxy_dst, HttpConnector::new());
+    let t1 = tokio::spawn(async move {
+        let _conn = connector
+            .call("https://hyper.rs".parse().unwrap())
+            .await
+            .expect("tunnel");
+    });
+
+    let t2 = tokio::spawn(async move {
+        let (mut io, _) = tcp.accept().await.expect("accept");
+        let mut buf = [0u8; 64];
+        let n = io.read(&mut buf).await.expect("read 1");
+        assert_eq!(
+            &buf[..n],
+            b"CONNECT hyper.rs:443 HTTP/1.1\r\nHost: hyper.rs:443\r\n\r\n"
+        );
+        // Write the response in two chunks with a flush+delay between them
+        // so the client's `read()` calls return the bytes as two separate
+        // reads instead of one.
+        io.write_all(b"HTTP/1.1 2").await.expect("write 1a");
+        io.flush().await.expect("flush 1a");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        io.write_all(b"00 OK\r\n\r\n").await.expect("write 1b");
+    });
+
+    t1.await.expect("task 1");
+    t2.await.expect("task 2");
+}
+
+// A genuinely bad response, also split across reads, should still be
+// rejected (and not be mistaken for "not enough bytes yet").
+#[cfg(not(miri))]
+#[tokio::test]
+async fn test_tunnel_fails_on_split_bad_response() {
+    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = tcp.local_addr().expect("local_addr");
+
+    let proxy_dst = format!("http://{addr}").parse().expect("uri");
+    let mut connector = Tunnel::new(proxy_dst, HttpConnector::new());
+    let t1 = tokio::spawn(async move {
+        let err = connector
+            .call("https://hyper.rs".parse().unwrap())
+            .await
+            .expect_err("tunnel should fail");
+        assert_eq!(err.to_string(), "tunnel error: unsuccessful");
+    });
+
+    let t2 = tokio::spawn(async move {
+        let (mut io, _) = tcp.accept().await.expect("accept");
+        let mut buf = [0u8; 64];
+        let n = io.read(&mut buf).await.expect("read 1");
+        assert_eq!(
+            &buf[..n],
+            b"CONNECT hyper.rs:443 HTTP/1.1\r\nHost: hyper.rs:443\r\n\r\n"
+        );
+        // "HTTP/1.1 500" is not a prefix of any accepted status line, so
+        // this must be rejected as soon as enough bytes have arrived to
+        // tell, even though it's still split across two reads.
+        io.write_all(b"HTTP/1.1 5").await.expect("write 1a");
+        io.flush().await.expect("flush 1a");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        io.write_all(b"00 Internal Server Error\r\n\r\n")
+            .await
+            .expect("write 1b");
+    });
+
+    t1.await.expect("task 1");
+    t2.await.expect("task 2");
+}
+
 #[cfg(not(miri))]
 #[tokio::test]
 async fn test_socks_v5_without_auth_works() {
