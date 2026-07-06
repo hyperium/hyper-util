@@ -23,10 +23,8 @@ mod internal {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex, Weak};
-    use std::task::{self, Poll, ready};
+    use std::task::{self, Poll, Waker, ready};
 
-    use futures_util::future;
-    use tokio::sync::oneshot;
     use tower_service::Service;
 
     use super::events;
@@ -56,6 +54,7 @@ mod internal {
         shared: Arc<Mutex<Shared<M::Response>>>,
         events: Ev,
         ready: Ready<M::Response>,
+        ready_waiter: Option<WaiterId>,
     }
 
     /// A builder to configure a `Cache`.
@@ -99,13 +98,9 @@ mod internal {
     {
         Racing {
             shared: Arc<Mutex<Shared<M::Response>>>,
-            select: future::Select<oneshot::Receiver<M::Response>, M::Future>,
+            waiter: WaiterId,
+            future: Option<M::Future>,
             events: Ev,
-        },
-        Connecting {
-            // TODO: could be Weak even here...
-            shared: Arc<Mutex<Shared<M::Response>>>,
-            future: M::Future,
         },
         Cached {
             svc: Option<Cached<M::Response>>,
@@ -116,7 +111,18 @@ mod internal {
     #[derive(Debug)]
     pub struct Shared<S> {
         services: Vec<S>,
-        waiters: VecDeque<oneshot::Sender<S>>,
+        waiters: VecDeque<Waiter>,
+        reservations: Vec<(WaiterId, S)>,
+        next_waiter: usize,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct WaiterId(usize);
+
+    #[derive(Debug)]
+    struct Waiter {
+        id: WaiterId,
+        waker: Option<Waker>,
     }
 
     // impl Builder
@@ -156,9 +162,12 @@ mod internal {
                 connector,
                 events: self.events,
                 ready: Ready::None,
+                ready_waiter: None,
                 shared: Arc::new(Mutex::new(Shared {
                     services: Vec::new(),
                     waiters: VecDeque::new(),
+                    reservations: Vec::new(),
+                    next_waiter: 0,
                 })),
             }
         }
@@ -208,12 +217,34 @@ mod internal {
                 Ready::None => {}
             }
 
-            if let Some(svc) = self.shared.lock().unwrap().take() {
-                self.ready = Ready::Cached(svc);
-                return Poll::Ready(Ok(()));
+            {
+                let mut shared = self.shared.lock().unwrap();
+                if let Some(id) = self.ready_waiter {
+                    if let Some(svc) = shared.take_reserved(id) {
+                        self.ready_waiter = None;
+                        self.ready = Ready::Cached(svc);
+                        return Poll::Ready(Ok(()));
+                    }
+                } else if let Some(svc) = shared.take_available() {
+                    self.ready = Ready::Cached(svc);
+                    return Poll::Ready(Ok(()));
+                }
+
+                let id = *self
+                    .ready_waiter
+                    .get_or_insert_with(|| shared.push_waiter());
+                shared.store_waker(id, cx.waker());
             }
 
-            self.connector.poll_ready(cx)
+            match self.connector.poll_ready(cx) {
+                Poll::Ready(result) => {
+                    if let Some(id) = self.ready_waiter.take() {
+                        self.shared.lock().unwrap().cancel_waiter(id);
+                    }
+                    Poll::Ready(result)
+                }
+                Poll::Pending => Poll::Pending,
+            }
         }
 
         fn call(&mut self, target: Dst) -> Self::Future {
@@ -225,7 +256,16 @@ mod internal {
                     };
                 }
                 Ready::None => {
-                    if let Some(svc) = self.shared.lock().unwrap().take() {
+                    if let Some(id) = self.ready_waiter.take() {
+                        let mut shared = self.shared.lock().unwrap();
+                        if let Some(svc) = shared.take_reserved(id) {
+                            return CacheFuture::Cached {
+                                svc: Some(Cached::new(svc, Arc::downgrade(&self.shared))),
+                            };
+                        }
+                        shared.cancel_waiter(id);
+                    }
+                    if let Some(svc) = self.shared.lock().unwrap().take_available() {
                         return CacheFuture::Cached {
                             svc: Some(Cached::new(svc, Arc::downgrade(&self.shared))),
                         };
@@ -235,16 +275,15 @@ mod internal {
 
             let waiter = {
                 let mut locked = self.shared.lock().unwrap();
-                let (tx, rx) = oneshot::channel();
-                locked.waiters.push_back(tx);
-                rx
+                locked.push_waiter()
             };
 
             // 2. Otherwise, we start a new connect, and also listen for
             //    any newly idle.
             CacheFuture::Racing {
                 shared: self.shared.clone(),
-                select: future::select(waiter, self.connector.call(target)),
+                waiter,
+                future: Some(self.connector.call(target)),
                 events: self.events.clone(),
             }
         }
@@ -261,6 +300,7 @@ mod internal {
                 events: self.events.clone(),
                 shared: self.shared.clone(),
                 ready: Ready::None,
+                ready_waiter: None,
             }
         }
     }
@@ -273,6 +313,24 @@ mod internal {
             if let Ready::Cached(svc) = std::mem::replace(&mut self.ready, Ready::None) {
                 if let Ok(mut shared) = self.shared.lock() {
                     shared.put(svc);
+                }
+            }
+            if let Some(id) = self.ready_waiter.take() {
+                if let Ok(mut shared) = self.shared.lock() {
+                    shared.cancel_waiter(id);
+                }
+            }
+        }
+    }
+
+    impl<M, Dst, Ev> Drop for CacheFuture<M, Dst, Ev>
+    where
+        M: Service<Dst>,
+    {
+        fn drop(&mut self) {
+            if let CacheFuture::Racing { shared, waiter, .. } = self {
+                if let Ok(mut shared) = shared.lock() {
+                    shared.cancel_waiter(*waiter);
                 }
             }
         }
@@ -288,50 +346,40 @@ mod internal {
         type Output = Result<Cached<M::Response>, M::Error>;
 
         fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-            loop {
-                match &mut *self.as_mut() {
-                    CacheFuture::Racing {
-                        shared,
-                        select,
-                        events,
-                    } => {
-                        match ready!(Pin::new(select).poll(cx)) {
-                            future::Either::Left((Err(_pool_closed), connecting)) => {
-                                // pool was dropped, so we'll never get it from a waiter,
-                                // but if this future still exists, then the user still
-                                // wants a connection. just wait for the connecting
-                                *self = CacheFuture::Connecting {
-                                    shared: shared.clone(),
-                                    future: connecting,
-                                };
-                            }
-                            future::Either::Left((Ok(pool_got), connecting)) => {
-                                events.on_race_lost(BackgroundConnect {
-                                    future: connecting,
-                                    shared: Arc::downgrade(&shared),
-                                });
-                                return Poll::Ready(Ok(Cached::new(
-                                    pool_got,
-                                    Arc::downgrade(&shared),
-                                )));
-                            }
-                            future::Either::Right((connected, _waiter)) => {
-                                let inner = connected?;
-                                return Poll::Ready(Ok(Cached::new(
-                                    inner,
-                                    Arc::downgrade(&shared),
-                                )));
-                            }
+            match &mut *self.as_mut() {
+                CacheFuture::Racing {
+                    shared,
+                    waiter,
+                    future,
+                    events,
+                } => {
+                    {
+                        let mut locked = shared.lock().unwrap();
+                        if let Some(pool_got) = locked.take_reserved(*waiter) {
+                            events.on_race_lost(BackgroundConnect {
+                                future: future.take().expect("racing future polled after done"),
+                                shared: Arc::downgrade(&shared),
+                            });
+                            return Poll::Ready(Ok(Cached::new(pool_got, Arc::downgrade(&shared))));
                         }
+                        locked.store_waker(*waiter, cx.waker());
                     }
-                    CacheFuture::Connecting { shared, future } => {
-                        let inner = ready!(Pin::new(future).poll(cx))?;
-                        return Poll::Ready(Ok(Cached::new(inner, Arc::downgrade(&shared))));
-                    }
-                    CacheFuture::Cached { svc } => {
-                        return Poll::Ready(Ok(svc.take().unwrap()));
-                    }
+
+                    let connected = match ready!(
+                        Pin::new(future.as_mut().expect("racing future polled after done"))
+                            .poll(cx)
+                    ) {
+                        Ok(inner) => inner,
+                        Err(err) => {
+                            shared.lock().unwrap().cancel_waiter(*waiter);
+                            return Poll::Ready(Err(err));
+                        }
+                    };
+
+                    shared.lock().unwrap().cancel_waiter(*waiter);
+                    Poll::Ready(Ok(Cached::new(connected, Arc::downgrade(&shared))))
                 }
+                CacheFuture::Cached { svc } => Poll::Ready(Ok(svc.take().unwrap())),
             }
         }
     }
@@ -407,26 +455,61 @@ mod internal {
 
     impl<V> Shared<V> {
         fn put(&mut self, val: V) {
-            let mut val = Some(val);
-            while let Some(tx) = self.waiters.pop_front() {
-                if !tx.is_closed() {
-                    match tx.send(val.take().unwrap()) {
-                        Ok(()) => break,
-                        Err(v) => {
-                            val = Some(v);
-                        }
-                    }
+            if let Some(mut waiter) = self.waiters.pop_front() {
+                self.reservations.push((waiter.id, val));
+                if let Some(waker) = waiter.waker.take() {
+                    waker.wake();
                 }
+                return;
             }
 
-            if let Some(val) = val {
-                self.services.push(val);
+            self.services.push(val);
+        }
+
+        fn take_available(&mut self) -> Option<V> {
+            if self.waiters.is_empty() {
+                self.services.pop()
+            } else {
+                None
             }
         }
 
-        fn take(&mut self) -> Option<V> {
-            // TODO: take in a loop
-            self.services.pop()
+        fn push_waiter(&mut self) -> WaiterId {
+            let id = WaiterId(self.next_waiter);
+            self.next_waiter = self.next_waiter.wrapping_add(1);
+            self.waiters.push_back(Waiter { id, waker: None });
+            id
+        }
+
+        fn store_waker(&mut self, id: WaiterId, waker: &Waker) {
+            if let Some(waiter) = self.waiters.iter_mut().find(|waiter| waiter.id == id) {
+                if waiter
+                    .waker
+                    .as_ref()
+                    .is_none_or(|current| !current.will_wake(waker))
+                {
+                    waiter.waker = Some(waker.clone());
+                }
+            }
+        }
+
+        fn take_reserved(&mut self, id: WaiterId) -> Option<V> {
+            let index = self
+                .reservations
+                .iter()
+                .position(|(reserved_id, _)| *reserved_id == id)?;
+            Some(self.reservations.remove(index).1)
+        }
+
+        fn cancel_waiter(&mut self, id: WaiterId) {
+            if let Some(index) = self.waiters.iter().position(|waiter| waiter.id == id) {
+                self.waiters.remove(index);
+                return;
+            }
+
+            if let Some(svc) = self.take_reserved(id) {
+                self.put(svc);
+            }
         }
     }
 
@@ -613,6 +696,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropped_racing_future_cancels_waiter() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+
+        let (mock, mut handle) = tower_test::mock::pair::<u32, &'static str>();
+        let mut cache = super::builder().build(mock);
+        handle.allow(16);
+
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let held = future::join(cache.call(0), async {
+            assert_request_eq!(handle, 0).send_response("conn");
+        })
+        .await
+        .0
+        .expect("call");
+
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut dropped = Box::pin(cache.call(1));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(dropped.as_mut().poll(&mut cx).is_pending());
+        drop(dropped);
+
+        drop(held);
+
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut reused = Box::pin(cache.call(2));
+        match reused.as_mut().poll(&mut cx) {
+            Poll::Ready(Ok(cached)) => {
+                assert_eq!(*cached.inner(), "conn");
+            }
+            Poll::Ready(Err(err)) => panic!("unexpected error: {err}"),
+            Poll::Pending => panic!("dropped waiter blocked idle reuse"),
+        }
+    }
+
+    #[tokio::test]
     async fn clone_readiness_reserves_idle_service() {
         let connector = StrictConnector::default();
         let poll_ready_count = connector.poll_ready_count.clone();
@@ -696,6 +821,69 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(poll_ready_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn idle_return_wakes_pending_poll_ready() {
+        use std::future::Future;
+        use std::sync::atomic::AtomicBool;
+        use std::task::{Context, Waker};
+
+        let connector = PendingConnector::default();
+        let allow_ready = connector.allow_ready.clone();
+        let mut cache = super::builder().build(connector);
+
+        allow_ready.store(true, Ordering::SeqCst);
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let held = cache.call(1).await.unwrap();
+        assert_eq!(*held.inner(), 0);
+
+        let mut ready = Box::pin(std::future::poll_fn(|cx| cache.poll_ready(cx)));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(ready.as_mut().poll(&mut cx).is_pending());
+
+        drop(held);
+
+        match ready.as_mut().poll(&mut cx) {
+            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(err)) => match err {},
+            Poll::Pending => panic!("idle return did not wake pending poll_ready"),
+        }
+        drop(ready);
+
+        let cached = cache.call(2).await.unwrap();
+        assert_eq!(*cached.inner(), 0);
+
+        #[derive(Default)]
+        struct PendingConnector {
+            allow_ready: Arc<AtomicBool>,
+            next: Arc<AtomicUsize>,
+            ready: bool,
+        }
+
+        impl Service<usize> for PendingConnector {
+            type Response = usize;
+            type Error = Infallible;
+            type Future = std::future::Ready<Result<usize, Infallible>>;
+
+            fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+                if self.allow_ready.swap(false, Ordering::SeqCst) {
+                    self.ready = true;
+                    Poll::Ready(Ok(()))
+                } else {
+                    Poll::Pending
+                }
+            }
+
+            fn call(&mut self, _target: usize) -> Self::Future {
+                assert!(self.ready, "connector called without poll_ready");
+                self.ready = false;
+                let id = self.next.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(Ok(id))
+            }
+        }
     }
 
     #[derive(Default)]
