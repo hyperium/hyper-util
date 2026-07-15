@@ -1,11 +1,106 @@
 #![cfg(all(feature = "client-legacy", feature = "client-proxy"))]
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use http::Uri;
+use hyper::rt::{Read, ReadBufCursor, Write};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tower_service::Service;
 
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::connect::proxy::{SocksV4, SocksV5, Tunnel};
+
+/// Wraps the actual TCP connector but caps a single Hyper read at four bytes.
+/// This keeps the real proxy flow from depending on TCP write coalescing.
+struct ChunkedReadConnector {
+    inner: HttpConnector,
+}
+
+struct ChunkedReadConnection {
+    inner: TcpStream,
+}
+
+impl ChunkedReadConnector {
+    fn new() -> Self {
+        Self {
+            inner: HttpConnector::new(),
+        }
+    }
+}
+
+impl ChunkedReadConnection {
+    fn new(inner: TcpStream) -> Self {
+        Self { inner }
+    }
+
+    fn into_inner(self) -> TcpStream {
+        self.inner
+    }
+}
+
+impl Service<Uri> for ChunkedReadConnector {
+    type Response = ChunkedReadConnection;
+    type Error = io::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(io::Error::other)
+    }
+
+    fn call(&mut self, dst: Uri) -> Self::Future {
+        let connecting = self.inner.call(dst);
+
+        Box::pin(async move {
+            connecting
+                .await
+                .map(|connection| ChunkedReadConnection::new(connection.into_inner()))
+                .map_err(io::Error::other)
+        })
+    }
+}
+
+impl Read for ChunkedReadConnection {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        mut buf: ReadBufCursor<'_>,
+    ) -> Poll<io::Result<()>> {
+        let mut chunk = [0; 4];
+        let len = buf.remaining().min(chunk.len());
+        let mut read_buf = ReadBuf::new(&mut chunk[..len]);
+
+        match Pin::new(&mut self.inner).poll_read(cx, &mut read_buf) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Ok(())) => {
+                buf.put_slice(read_buf.filled());
+                Poll::Ready(Ok(()))
+            }
+        }
+    }
+}
+
+impl Write for ChunkedReadConnection {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
 
 #[cfg(not(miri))]
 #[tokio::test]
@@ -50,7 +145,7 @@ async fn test_socks_v5_without_auth_works() {
     let target_addr = target_tcp.local_addr().expect("local_addr");
     let target_dst = format!("http://{target_addr}").parse().expect("uri");
 
-    let mut connector = SocksV5::new(proxy_dst, HttpConnector::new());
+    let mut connector = SocksV5::new(proxy_dst, ChunkedReadConnector::new());
 
     // Client
     //
@@ -92,7 +187,15 @@ async fn test_socks_v5_without_auth_works() {
         let mut to_target = TcpStream::connect(target_addr).await.expect("connect");
 
         let message = [0x05, 0x00, 0x00, 0x01, ip1, ip2, ip3, ip4, p1, p2];
-        to_client.write_all(&message).await.expect("write 2");
+        to_client
+            .write_all(&message[..4])
+            .await
+            .expect("write 2 first part");
+        to_client.flush().await.expect("flush 2 first part");
+        to_client
+            .write_all(&message[4..])
+            .await
+            .expect("write 2 second part");
 
         let (from_client, from_target) =
             tokio::io::copy_bidirectional(&mut to_client, &mut to_target)

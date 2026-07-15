@@ -9,7 +9,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 
 use hyper::rt::Read;
 
@@ -52,7 +52,9 @@ where
         let n = crate::rt::read(&mut conn, &mut tmp).await?;
         buf.extend_from_slice(&tmp[..n]);
 
-        match M::try_from(buf) {
+        let mut message = buf.clone();
+
+        match M::try_from(&mut message) {
             Err(ParsingError::Incomplete) => {
                 if n == 0 {
                     if buf.spare_capacity_mut().is_empty() {
@@ -67,7 +69,11 @@ where
                 }
             }
             Err(err) => return Err(err.into()),
-            Ok(res) => return Ok(res),
+            Ok(res) => {
+                let consumed = buf.len() - message.len();
+                buf.advance(consumed);
+                return Ok(res);
+            }
         }
     }
 }
