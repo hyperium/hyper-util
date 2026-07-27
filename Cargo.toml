@@ -18,7 +18,7 @@ features = ["full"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-base64 = { version = "0.22", optional = true }
+base64 = { version = "0.23", optional = true }
 bytes = "1.7.1"
 futures-channel = { version = "0.3", optional = true }
 futures-util = { version = "0.3.16", default-features = false, optional = true }
