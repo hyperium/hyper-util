@@ -138,11 +138,7 @@ where
             // Whilst SOCKSv4 does not support IPv6, this bracket stripping will enable an IPv6
             // destination to be correctly rejected down the line. Without it, we would end up with
             // a DNS resolution failure which would be confusing.
-            let host = host_from_uri
-                .strip_prefix('[')
-                .and_then(|s| s.strip_suffix(']'))
-                .unwrap_or(host_from_uri)
-                .to_string();
+            let host = crate::client::strip_ipv6_brackets(host_from_uri).to_string();
 
             let conn = connecting.await.map_err(SocksError::Inner)?;
             config.execute(conn, host, port).await

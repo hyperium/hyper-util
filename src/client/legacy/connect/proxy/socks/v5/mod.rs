@@ -265,11 +265,7 @@ where
 
             // Note: host() returns the host part of the URI which could be a square bracketed IPv6
             // address. We need to remove any brackets to make it a valid IP address.
-            let host = host_from_uri
-                .strip_prefix('[')
-                .and_then(|s| s.strip_suffix(']'))
-                .unwrap_or(host_from_uri)
-                .to_string();
+            let host = crate::client::strip_ipv6_brackets(host_from_uri).to_string();
 
             let conn = connecting.await.map_err(SocksError::Inner)?;
             config.execute(conn, host, port).await
