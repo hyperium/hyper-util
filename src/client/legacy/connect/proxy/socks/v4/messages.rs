@@ -9,7 +9,7 @@ use std::net::SocketAddrV4;
 /// |  1  |  1  |    2    |         4         |   Variable  |  1   |  Variable  |   1  |
 /// +-----+-----+----+----+----+----+----+----+-------------+------+------------+------+
 ///                                                                ^^^^^^^^^^^^^^^^^^^^^
-///                                                      optional: only do IP is 0.0.0.X
+///                                                      optional: only if IP is 0.0.0.X
 #[derive(Debug)]
 pub struct Request<'a>(pub &'a Address);
 
@@ -41,7 +41,7 @@ impl Request<'_> {
     pub fn write_to_buf<B: BufMut>(&self, mut buf: B) -> Result<usize, SerializeError> {
         match self.0 {
             Address::Socket(socket) => {
-                if buf.remaining_mut() < 10 {
+                if buf.remaining_mut() < 9 {
                     return Err(SerializeError::WouldOverflow);
                 }
 
@@ -51,30 +51,28 @@ impl Request<'_> {
                 buf.put_u16(socket.port()); // Port
                 buf.put_slice(&socket.ip().octets()); // IP
 
-                buf.put_u8(0x00); // USERID
-                buf.put_u8(0x00); // NULL
+                buf.put_u8(0x00); // NULL terminating an empty USERID
 
-                Ok(10)
+                Ok(9)
             }
 
             Address::Domain(domain, port) => {
-                if buf.remaining_mut() < 10 + domain.len() + 1 {
+                if buf.remaining_mut() < 9 + domain.len() + 1 {
                     return Err(SerializeError::WouldOverflow);
                 }
 
                 buf.put_u8(0x04); // Version
                 buf.put_u8(0x01); // CONNECT
 
-                buf.put_u16(*port); // IP
+                buf.put_u16(*port); // Port
                 buf.put_slice(&[0x00, 0x00, 0x00, 0xFF]); // Invalid IP
 
-                buf.put_u8(0x00); // USERID
-                buf.put_u8(0x00); // NULL
+                buf.put_u8(0x00); // NULL terminating an empty USERID
 
                 buf.put_slice(domain.as_bytes()); // Domain
                 buf.put_u8(0x00); // NULL
 
-                Ok(10 + domain.len() + 1)
+                Ok(9 + domain.len() + 1)
             }
         }
     }
