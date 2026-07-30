@@ -9,7 +9,7 @@ use std::net::SocketAddrV4;
 /// |  1  |  1  |    2    |         4         |   Variable  |  1   |  Variable  |   1  |
 /// +-----+-----+----+----+----+----+----+----+-------------+------+------------+------+
 ///                                                                ^^^^^^^^^^^^^^^^^^^^^
-///                                                      optional: only do IP is 0.0.0.X
+///                                                   optional: only do if IP is 0.0.0.X
 #[derive(Debug)]
 pub struct Request<'a>(pub &'a Address);
 

@@ -65,7 +65,7 @@ impl<C> SocksV5<C> {
     ///
     /// Username and Password must be maximum of 255 characters each.
     /// 0 length strings are allowed despite RFC prohibiting it. This is done for
-    /// compatablity with server implementations that use empty credentials
+    /// compatibility with server implementations that use empty credentials
     /// to allow returning error codes during IP authentication.
     pub fn with_auth(mut self, user: String, pass: String) -> Self {
         self.config.proxy_auth = Some((user, pass));

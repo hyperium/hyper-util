@@ -117,10 +117,10 @@ impl AuthenticationReq<'_> {
 
         buf.put_u8(0x01); // Version
 
-        buf.put_u8(self.0.len() as u8); // Username length (guarenteed to be 255 or less)
+        buf.put_u8(self.0.len() as u8); // Username length (guaranteed to be 255 or less)
         buf.put_slice(self.0.as_bytes()); // Username
 
-        buf.put_u8(self.1.len() as u8); // Password length (guarenteed to be 255 or less)
+        buf.put_u8(self.1.len() as u8); // Password length (guaranteed to be 255 or less)
         buf.put_slice(self.1.as_bytes()); // Password
 
         Ok(3 + self.0.len() + self.1.len())
