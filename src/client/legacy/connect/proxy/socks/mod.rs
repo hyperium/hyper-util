@@ -9,7 +9,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 
 use hyper::rt::Read;
 
@@ -44,7 +44,7 @@ pub enum SerializeError {
 async fn read_message<T, M, C>(mut conn: &mut T, buf: &mut BytesMut) -> Result<M, SocksError<C>>
 where
     T: Read + Unpin,
-    M: for<'a> TryFrom<&'a mut BytesMut, Error = ParsingError>,
+    M: for<'a, 'b> TryFrom<&'a mut &'b [u8], Error = ParsingError>,
 {
     let mut tmp = [0; 513];
 
@@ -52,7 +52,8 @@ where
         let n = crate::rt::read(&mut conn, &mut tmp).await?;
         buf.extend_from_slice(&tmp[..n]);
 
-        match M::try_from(buf) {
+        let mut view = &buf[..];
+        match M::try_from(&mut view) {
             Err(ParsingError::Incomplete) => {
                 if n == 0 {
                     if buf.spare_capacity_mut().is_empty() {
@@ -67,7 +68,11 @@ where
                 }
             }
             Err(err) => return Err(err.into()),
-            Ok(res) => return Ok(res),
+            Ok(res) => {
+                let consumed = buf.len() - view.len();
+                buf.advance(consumed);
+                return Ok(res);
+            }
         }
     }
 }
@@ -150,5 +155,52 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.project().fut.poll(cx)
+    }
+}
+
+#[cfg(all(test, feature = "tokio"))]
+mod test {
+    use bytes::BytesMut;
+    use tokio::io::AsyncWriteExt;
+
+    use super::v5::messages::{ProxyRes, Status};
+    use super::{SocksError, read_message};
+    use crate::rt::TokioIo;
+
+    // A SOCKS5 ProxyRes message. Successful, bound to 127.0.0.1:8080.
+    const SEG1: [u8; 4] = [0x05, 0x00, 0x00, 0x01];
+    const SEG2: [u8; 6] = [0x7F, 0x00, 0x00, 0x01, 0x1F, 0x90];
+
+    #[tokio::test]
+    async fn it_works_in_one_read() {
+        let (client, mut server) = tokio::io::duplex(SEG1.len() + SEG2.len());
+        server.write_all(&SEG1).await.unwrap();
+        server.write_all(&SEG2).await.unwrap();
+
+        let mut conn = TokioIo::new(client);
+        let mut buf = BytesMut::new();
+
+        let m: Result<ProxyRes, SocksError<()>> = read_message(&mut conn, &mut buf).await;
+        assert!(m.is_ok());
+        assert_eq!(m.unwrap(), ProxyRes(Status::Success));
+    }
+
+    #[tokio::test]
+    async fn it_works_in_multiple_reads() {
+        // Bounded stream ensures message arrives in two reads
+        let (client, mut server) = tokio::io::duplex(SEG1.len());
+        let _writer = tokio::spawn(async move {
+            server.write_all(&SEG1).await.unwrap();
+            server.write_all(&SEG2).await.unwrap();
+        });
+
+        let mut conn = TokioIo::new(client);
+        let mut buf = BytesMut::new();
+
+        let m: Result<ProxyRes, SocksError<()>> = read_message(&mut conn, &mut buf).await;
+        assert!(m.is_ok());
+        assert_eq!(m.unwrap(), ProxyRes(Status::Success));
+
+        _writer.await.unwrap();
     }
 }
