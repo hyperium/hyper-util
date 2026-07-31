@@ -1,7 +1,7 @@
 mod errors;
 pub use errors::*;
 
-mod messages;
+pub(super) mod messages;
 use messages::*;
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};

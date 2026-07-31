@@ -152,3 +152,50 @@ where
         self.project().fut.poll(cx)
     }
 }
+
+#[cfg(all(test, feature = "tokio"))]
+mod test {
+    use bytes::BytesMut;
+    use tokio::io::AsyncWriteExt;
+
+    use super::v5::messages::{ProxyRes, Status};
+    use super::{SocksError, read_message};
+    use crate::rt::TokioIo;
+
+    // A SOCKS5 ProxyRes message. Successful, bound to 127.0.0.1:8080.
+    const SEG1: [u8; 4] = [0x05, 0x00, 0x00, 0x01];
+    const SEG2: [u8; 6] = [0x7F, 0x00, 0x00, 0x01, 0x1F, 0x90];
+
+    #[tokio::test]
+    async fn it_works_in_one_read() {
+        let (client, mut server) = tokio::io::duplex(SEG1.len() + SEG2.len());
+        server.write_all(&SEG1).await.unwrap();
+        server.write_all(&SEG2).await.unwrap();
+
+        let mut conn = TokioIo::new(client);
+        let mut buf = BytesMut::new();
+
+        let m: Result<ProxyRes, SocksError<()>> = read_message(&mut conn, &mut buf).await;
+        assert!(m.is_ok());
+        assert_eq!(m.unwrap(), ProxyRes(Status::Success));
+    }
+
+    #[tokio::test]
+    async fn it_works_in_multiple_reads() {
+        // Bounded stream ensures message arrives in two reads
+        let (client, mut server) = tokio::io::duplex(SEG1.len());
+        let _writer = tokio::spawn(async move {
+            server.write_all(&SEG1).await.unwrap();
+            server.write_all(&SEG2).await.unwrap();
+        });
+
+        let mut conn = TokioIo::new(client);
+        let mut buf = BytesMut::new();
+
+        let m: Result<ProxyRes, SocksError<()>> = read_message(&mut conn, &mut buf).await;
+        assert!(m.is_ok());
+        assert_eq!(m.unwrap(), ProxyRes(Status::Success));
+
+        _writer.await.unwrap();
+    }
+}
