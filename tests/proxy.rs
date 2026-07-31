@@ -425,7 +425,8 @@ async fn test_socks_v5_optimistic_works() {
     let proxy_addr = proxy_tcp.local_addr().expect("local_addr");
     let proxy_dst = format!("http://{proxy_addr}").parse().expect("uri");
 
-    let target_addr = std::net::SocketAddr::new([127, 0, 0, 1].into(), 1234);
+    let target_tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let target_addr = target_tcp.local_addr().expect("local_addr");
     let target_dst = format!("http://{target_addr}").parse().expect("uri");
 
     let mut connector = SocksV5::new(proxy_dst, HttpConnector::new())
@@ -437,7 +438,20 @@ async fn test_socks_v5_optimistic_works() {
     // Will use `SocksV5` to establish proxy tunnel.
     // Will send "Hello World!" to the target and receive "Goodbye!" back.
     let t1 = tokio::spawn(async move {
-        let _ = connector.call(target_dst).await.expect("tunnel");
+        let conn = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            connector.call(target_dst),
+        )
+        .await
+        .expect("handshake timed out")
+        .expect("tunnel");
+
+        let mut tcp = conn.into_inner();
+        tcp.write_all(b"Hello World!").await.expect("write 1");
+
+        let mut buf = [0u8; 64];
+        let n = tcp.read(&mut buf).await.expect("read 1");
+        assert_eq!(&buf[..n], b"Goodbye!");
     });
 
     // Proxy
@@ -466,6 +480,8 @@ async fn test_socks_v5_optimistic_works() {
         to_client.read_exact(&mut buf).await.expect("read");
         assert_eq!(request.as_slice(), buf);
 
+        let mut to_target = TcpStream::connect(target_addr).await.expect("connect");
+
         // Send all handshake messages back
         to_client
             .write_all(response.as_slice())
@@ -473,10 +489,33 @@ async fn test_socks_v5_optimistic_works() {
             .expect("write");
 
         to_client.flush().await.expect("flush");
+
+        let (from_client, from_target) =
+            tokio::io::copy_bidirectional(&mut to_client, &mut to_target)
+                .await
+                .expect("proxy");
+
+        assert_eq!(from_client, 12);
+        assert_eq!(from_target, 8)
+    });
+
+    // Target server
+    //
+    // Will accept connection from proxy server
+    // Will receive "Hello World!" from the client and return "Goodbye!"
+    let t3 = tokio::spawn(async move {
+        let (mut io, _) = target_tcp.accept().await.expect("accept");
+        let mut buf = [0u8; 64];
+
+        let n = io.read(&mut buf).await.expect("read 1");
+        assert_eq!(&buf[..n], b"Hello World!");
+
+        io.write_all(b"Goodbye!").await.expect("write 1");
     });
 
     t1.await.expect("task - client");
     t2.await.expect("task - proxy");
+    t3.await.expect("task - target");
 }
 
 #[cfg(not(miri))]
