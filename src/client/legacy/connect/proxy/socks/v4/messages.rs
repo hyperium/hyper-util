@@ -1,6 +1,6 @@
 use super::super::{ParsingError, SerializeError};
 
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut};
 use std::net::SocketAddrV4;
 
 /// +-----+-----+----+----+----+----+----+----+-------------+------+------------+------+
@@ -80,10 +80,10 @@ impl Request<'_> {
     }
 }
 
-impl TryFrom<&mut BytesMut> for Response {
+impl TryFrom<&mut &[u8]> for Response {
     type Error = ParsingError;
 
-    fn try_from(buf: &mut BytesMut) -> Result<Self, Self::Error> {
+    fn try_from(buf: &mut &[u8]) -> Result<Self, Self::Error> {
         if buf.remaining() < 8 {
             return Err(ParsingError::Incomplete);
         }
@@ -182,7 +182,7 @@ mod test {
             0x1F, 0x90, // port: 8080 (ignored, only used for BIND)
             127, 0, 0, 1, // address: 127.0.0.1 (ignored, only used for BIND)
         ];
-        let mut view = BytesMut::from(&raw[..]);
+        let mut view = &raw[..];
 
         let res = Response::try_from(&mut view).unwrap();
         assert_eq!(res, Response(Status::Success));
@@ -197,7 +197,7 @@ mod test {
             0x00, // truncated mid-port
         ];
 
-        let err = Response::try_from(&mut BytesMut::from(&raw[..])).unwrap_err();
+        let err = Response::try_from(&mut &raw[..]).unwrap_err();
         assert!(matches!(err, ParsingError::Incomplete));
     }
 

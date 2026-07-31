@@ -92,10 +92,10 @@ impl NegotiationReq<'_> {
     }
 }
 
-impl TryFrom<&mut BytesMut> for NegotiationRes {
+impl TryFrom<&mut &[u8]> for NegotiationRes {
     type Error = ParsingError;
 
-    fn try_from(buf: &mut BytesMut) -> Result<Self, ParsingError> {
+    fn try_from(buf: &mut &[u8]) -> Result<Self, ParsingError> {
         if buf.remaining() < 2 {
             return Err(ParsingError::Incomplete);
         }
@@ -127,10 +127,10 @@ impl AuthenticationReq<'_> {
     }
 }
 
-impl TryFrom<&mut BytesMut> for AuthenticationRes {
+impl TryFrom<&mut &[u8]> for AuthenticationRes {
     type Error = ParsingError;
 
-    fn try_from(buf: &mut BytesMut) -> Result<Self, ParsingError> {
+    fn try_from(buf: &mut &[u8]) -> Result<Self, ParsingError> {
         if buf.remaining() < 2 {
             return Err(ParsingError::Incomplete);
         }
@@ -168,10 +168,10 @@ impl ProxyReq<'_> {
     }
 }
 
-impl TryFrom<&mut BytesMut> for ProxyRes {
+impl TryFrom<&mut &[u8]> for ProxyRes {
     type Error = ParsingError;
 
-    fn try_from(buf: &mut BytesMut) -> Result<Self, ParsingError> {
+    fn try_from(buf: &mut &[u8]) -> Result<Self, ParsingError> {
         if buf.remaining() < 3 {
             return Err(ParsingError::Incomplete);
         }
@@ -239,10 +239,10 @@ impl Address {
     }
 }
 
-impl TryFrom<&mut BytesMut> for Address {
+impl TryFrom<&mut &[u8]> for Address {
     type Error = ParsingError;
 
-    fn try_from(buf: &mut BytesMut) -> Result<Self, Self::Error> {
+    fn try_from(buf: &mut &[u8]) -> Result<Self, Self::Error> {
         if buf.remaining() < 2 {
             return Err(ParsingError::Incomplete);
         }
@@ -263,17 +263,18 @@ impl TryFrom<&mut BytesMut> for Address {
             }
             // Domain
             0x03 => {
-                let len = buf.get_u8();
+                let len = buf.get_u8() as usize;
 
                 if len == 0 {
                     return Err(ParsingError::Other);
-                } else if buf.remaining() < (len as usize) + 2 {
+                } else if buf.remaining() < len + 2 {
                     return Err(ParsingError::Incomplete);
                 }
 
-                let domain = std::str::from_utf8(&buf[..len as usize])
+                let domain = std::str::from_utf8(&buf.chunk()[..len])
                     .map_err(|_| ParsingError::Other)?
                     .to_string();
+                buf.advance(len);
 
                 let port = buf.get_u16();
 
@@ -375,7 +376,7 @@ mod test {
             0x02, // selected method: username/password
         ];
 
-        let mut view = BytesMut::from(&raw[..]);
+        let mut view = &raw[..];
 
         let res = NegotiationRes::try_from(&mut view).unwrap();
         assert_eq!(res, NegotiationRes(AuthMethod::UserPass));
@@ -407,7 +408,7 @@ mod test {
             0x00, // status: success
         ];
         assert_eq!(
-            AuthenticationRes::try_from(&mut BytesMut::from(&raw[..])).unwrap(),
+            AuthenticationRes::try_from(&mut &raw[..]).unwrap(),
             AuthenticationRes(true)
         );
 
@@ -416,7 +417,7 @@ mod test {
             0x01, // status: failure
         ];
         assert_eq!(
-            AuthenticationRes::try_from(&mut BytesMut::from(&raw[..])).unwrap(),
+            AuthenticationRes::try_from(&mut &raw[..]).unwrap(),
             AuthenticationRes(false)
         );
     }
@@ -450,7 +451,7 @@ mod test {
             127, 0, 0, 1, // bound address: 127.0.0.1
             0x1F, 0x90, // bound port: 8080
         ];
-        let mut view = BytesMut::from(&raw[..]);
+        let mut view = &raw[..];
 
         let res = ProxyRes::try_from(&mut view).unwrap();
         assert_eq!(res, ProxyRes(Status::Success));
@@ -473,8 +474,9 @@ mod test {
         let n = addr.write_to_buf(&mut buf).unwrap();
         assert_eq!(n, buf.len());
 
-        assert_eq!(Address::try_from(&mut buf).unwrap(), addr);
-        assert!(buf.is_empty(), "address bytes should be fully consumed");
+        let mut view = &buf[..];
+        assert_eq!(Address::try_from(&mut view).unwrap(), addr);
+        assert!(view.is_empty(), "address bytes should be fully consumed");
     }
 
     #[test]
