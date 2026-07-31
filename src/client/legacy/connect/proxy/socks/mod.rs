@@ -49,12 +49,11 @@ where
     let mut tmp = [0; 513];
 
     loop {
-        let n = crate::rt::read(&mut conn, &mut tmp).await?;
-        buf.extend_from_slice(&tmp[..n]);
-
         let mut view = &buf[..];
         match M::try_from(&mut view) {
             Err(ParsingError::Incomplete) => {
+                let n = crate::rt::read(&mut conn, &mut tmp).await?;
+
                 if n == 0 {
                     if buf.spare_capacity_mut().is_empty() {
                         return Err(SocksError::Parsing(ParsingError::WouldOverflow));
@@ -66,6 +65,8 @@ where
                         .into());
                     }
                 }
+
+                buf.extend_from_slice(&tmp[..n]);
             }
             Err(err) => return Err(err.into()),
             Ok(res) => {
