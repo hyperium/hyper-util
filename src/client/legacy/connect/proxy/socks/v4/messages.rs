@@ -141,8 +141,7 @@ mod test {
             0x01, // command: connect
             0x1F, 0x90, // destination port: 8080
             127, 0, 0, 1,    // destination address: 127.0.0.1
-            0x00, // userid (empty)
-            0x00, // null terminator
+            0x00, // null terminating an empty userid
         ];
 
         let addr = Address::Socket(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080));
@@ -159,8 +158,7 @@ mod test {
             0x01, // command: connect
             0x1F, 0x90, // destination port: 8080
             0x00, 0x00, 0x00, 0xFF, // invalid IP: signals that a domain follows (SOCKS4a)
-            0x00, // userid (empty)
-            0x00, // null terminator
+            0x00, // null terminating an empty userid
             b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'c', b'o', b'm', // domain
             0x00, // null terminator
         ];
