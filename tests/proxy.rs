@@ -381,7 +381,7 @@ async fn test_socks_v4_works() {
 
         let [p1, p2] = target_addr.port().to_be_bytes();
         let [ip1, ip2, ip3, ip4] = [127, 0, 0, 1];
-        let message = [4, 0x01, p1, p2, ip1, ip2, ip3, ip4, 0, 0];
+        let message = [4, 0x01, p1, p2, ip1, ip2, ip3, ip4, 0];
         let n = to_client.read(&mut buf).await.expect("read");
         assert_eq!(&buf[..n], message);
 
@@ -416,6 +416,54 @@ async fn test_socks_v4_works() {
     t1.await.expect("task - client");
     t2.await.expect("task - proxy");
     t3.await.expect("task - target");
+}
+
+#[cfg(not(miri))]
+#[tokio::test]
+async fn test_socks_v4a_with_server_resolved_domain_works() {
+    let proxy_tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let proxy_addr = proxy_tcp.local_addr().expect("local_addr");
+    let proxy_dst = format!("http://{proxy_addr}").parse().expect("uri");
+
+    let mut connector = SocksV4::new(proxy_dst, HttpConnector::new());
+
+    // Client
+    //
+    // Will use `SocksV4` to establish a tunnel to a domain name, leaving
+    // resolution to the proxy server (the SOCKS4a extension).
+    let t1 = tokio::spawn(async move {
+        let _conn = connector
+            .call("https://hyper.rs:443".try_into().unwrap())
+            .await
+            .expect("tunnel");
+    });
+
+    // Proxy
+    //
+    // Will receive a SOCKS4a CONNECT command carrying the domain name, and
+    // reply with a success status.
+    let t2 = tokio::spawn(async move {
+        let (mut to_client, _) = proxy_tcp.accept().await.expect("accept");
+        let mut buf = [0u8; 512];
+
+        let host = "hyper.rs";
+        let [p1, p2] = 443u16.to_be_bytes();
+
+        // VN, CD, DSTPORT, DSTIP (0.0.0.x marks a SOCKS4a request), then the
+        // NULL terminating an empty USERID, then the NULL-terminated domain.
+        let mut message = vec![0x04, 0x01, p1, p2, 0x00, 0x00, 0x00, 0xFF, 0x00];
+        message.extend(host.as_bytes());
+        message.push(0x00);
+
+        let n = to_client.read(&mut buf).await.expect("read");
+        assert_eq!(&buf[..n], message);
+
+        let message = [0, 90, p1, p2, 0, 0, 0, 0];
+        to_client.write_all(&message).await.expect("write");
+    });
+
+    t1.await.expect("task - client");
+    t2.await.expect("task - proxy");
 }
 
 #[cfg(not(miri))]
