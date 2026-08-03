@@ -51,6 +51,9 @@ pnet_datalink = "0.35.0"
 [target.'cfg(target_os = "macos")'.dependencies]
 system-configuration = { version = "0.7", optional = true }
 
+[target.'cfg(target_os = "ios")'.dependencies]
+core-foundation = { version = "0.9", optional = true }
+
 [target.'cfg(windows)'.dependencies]
 windows-registry = { version = ">=0.3, <0.7", optional = true }
 
@@ -78,7 +81,7 @@ client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower-servi
 client-legacy = ["client", "tokio/net", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util"]
 client-pool = ["client", "dep:futures-util", "dep:tower-layer", "tokio/sync"]
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
-client-proxy-system = ["dep:system-configuration", "dep:windows-registry"]
+client-proxy-system = ["dep:system-configuration", "dep:windows-registry", "dep:core-foundation"]
 
 server = ["hyper/server"]
 server-auto = ["server", "http1", "http2"]
