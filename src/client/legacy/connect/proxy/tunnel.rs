@@ -224,10 +224,31 @@ where
         // else read more
         } else if recvd.starts_with(b"HTTP/1.1 407") {
             return Err(TunnelError::ProxyAuthRequired);
+        } else if is_prefix_of_expected_status_line(recvd) {
+            // Not enough bytes have arrived yet to tell which (if any) of the
+            // expected status lines this is going to be. This happens when
+            // the proxy's response is split across multiple reads (e.g. the
+            // status line arrives in more than one TCP segment). Keep
+            // reading instead of bailing out on a partial match.
+            if pos == buf.len() {
+                return Err(TunnelError::ProxyHeadersTooLong);
+            }
         } else {
             return Err(TunnelError::TunnelUnsuccessful);
         }
     }
+}
+
+/// Returns true if `recvd` (the bytes read so far) could still turn into one
+/// of the status lines we recognize once more bytes arrive, i.e. `recvd` is
+/// a prefix of that status line. This lets the caller distinguish "not
+/// enough bytes yet" from "this is never going to match".
+fn is_prefix_of_expected_status_line(recvd: &[u8]) -> bool {
+    const EXPECTED: [&[u8]; 3] = [b"HTTP/1.1 200", b"HTTP/1.0 200", b"HTTP/1.1 407"];
+
+    EXPECTED
+        .iter()
+        .any(|status_line| recvd.len() < status_line.len() && status_line.starts_with(recvd))
 }
 
 impl std::fmt::Display for TunnelError {
