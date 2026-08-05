@@ -6,7 +6,7 @@
 
 use std::error::Error as StdError;
 use std::fmt;
-use std::future::{poll_fn, Future};
+use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::task::{self, Poll};
 use std::time::Duration;
@@ -14,18 +14,18 @@ use std::time::Duration;
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::uri::Scheme;
 use hyper::client::conn::TrySendError as ConnTrySendError;
-use hyper::header::{HeaderValue, HOST};
+use hyper::header::{HOST, HeaderValue};
 use hyper::rt::Timer;
-use hyper::{body::Body, Method, Request, Response, Uri, Version};
+use hyper::{Method, Request, Response, Uri, Version, body::Body};
 use tracing::{debug, trace, warn};
 
-use super::connect::capture::CaptureConnectionExtension;
 #[cfg(feature = "tokio")]
 use super::connect::HttpConnector;
+use super::connect::capture::CaptureConnectionExtension;
 use super::connect::{Alpn, Connect, Connected, Connection};
 use super::pool::{self, Ver};
 
-use crate::common::{lazy as hyper_lazy, timer, Exec, Lazy, SyncWrapper};
+use crate::common::{Exec, Lazy, SyncWrapper, lazy as hyper_lazy, timer};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -484,7 +484,7 @@ where
     fn connect_to(
         &self,
         pool_key: PoolKey,
-    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin
+    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin + use<C, B>
     {
         let executor = self.exec.clone();
         let pool = self.pool.clone();
@@ -1509,6 +1509,24 @@ impl Builder {
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_max_concurrent_reset_streams(&mut self, max: usize) -> &mut Self {
         self.h2_builder.max_concurrent_reset_streams(max);
+        self
+    }
+
+    /// Configures the maximum number of local resets due to protocol errors made by the remote end.
+    ///
+    /// See the documentation of [`h2::client::Builder::max_local_error_reset_streams`] for more
+    /// details.
+    ///
+    /// The default value is determined by the `h2` crate.
+    ///
+    /// [`h2::client::Builder::max_local_error_reset_streams`]: https://docs.rs/h2/latest/h2/client/struct.Builder.html#method.max_local_error_reset_streams
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+    pub fn http2_max_local_error_reset_streams(
+        &mut self,
+        max: impl Into<Option<usize>>,
+    ) -> &mut Self {
+        self.h2_builder.max_local_error_reset_streams(max);
         self
     }
 

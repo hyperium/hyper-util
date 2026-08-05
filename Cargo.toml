@@ -10,28 +10,28 @@ license = "MIT"
 authors = ["Sean McArthur <sean@seanmonstar.com>"]
 keywords = ["http", "hyper", "hyperium"]
 categories = ["network-programming", "web-programming::http-client", "web-programming::http-server"]
-edition = "2021"
-rust-version = "1.64"
+edition = "2024"
+rust-version = "1.85"
 
 [package.metadata.docs.rs]
 features = ["full"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-base64 = { version = "0.22", optional = true }
+base64 = { version = "0.23", optional = true }
 bytes = "1.7.1"
 futures-channel = { version = "0.3", optional = true }
 futures-util = { version = "0.3.16", default-features = false, optional = true }
 http = "1.0"
 http-body = "1.0.0"
-hyper = "1.8.0"
+hyper = "1.9.0"
 ipnet = { version = "2.9", optional = true }
 libc = { version = "0.2", optional = true }
 percent-encoding = { version = "2.3", optional = true }
 pin-project-lite = "0.2.4"
-socket2 = { version = ">=0.5.9, <0.7", optional = true, features = ["all"] }
-tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
-tokio = { version = "1", optional = true, default-features = false  }
+socket2 = { version = "0.6", optional = true, features = ["all"] }
+tracing = { version = "0.1.36", default-features = false, features = ["std"], optional = true }
+tokio = { version = "1.13", optional = true, default-features = false  }
 tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }
 
@@ -40,7 +40,7 @@ hyper = { version = "1.4.0", features = ["full"] }
 bytes = "1"
 futures-util = { version = "0.3.16", default-features = false, features = ["alloc"] }
 http-body-util = "0.1.0"
-tokio = { version = "1", features = ["macros", "test-util", "signal", "net"] }
+tokio = { version = "1", features = ["macros", "test-util", "signal", "net", "io-util"] }
 tokio-test = "0.4"
 tower-test = "0.4"
 pretty_env_logger = "0.5"
@@ -74,9 +74,9 @@ full = [
     "tracing",
 ]
 
-client = ["hyper/client", "tokio/net", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
-client-legacy = ["client", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util"]
-client-pool = ["client", "dep:futures-util", "dep:tower-layer"]
+client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
+client-legacy = ["client", "tokio/net", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util"]
+client-pool = ["client", "dep:futures-util", "dep:tower-layer", "tokio/sync"]
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
 client-proxy-system = ["dep:system-configuration", "dep:windows-registry"]
 

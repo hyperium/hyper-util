@@ -39,7 +39,10 @@ impl GracefulShutdown {
     }
 
     /// Wrap a future for graceful shutdown watching.
-    pub fn watch<C: GracefulConnection>(&self, conn: C) -> impl Future<Output = C::Output> {
+    pub fn watch<C: GracefulConnection>(
+        &self,
+        conn: C,
+    ) -> impl Future<Output = C::Output> + use<C> {
         self.watcher().watch(conn)
     }
 
@@ -277,9 +280,9 @@ mod private {
     impl<'body, I, B, S, E> Sealed for crate::server::conn::auto::Connection<'_, 'body, I, S, E>
     where
         S: hyper::service::Service<
-            http::Request<hyper::body::Incoming>,
-            Response = http::Response<B>,
-        >,
+                http::Request<hyper::body::Incoming>,
+                Response = http::Response<B>,
+            >,
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         S::Future: 'static,
         I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
@@ -294,9 +297,9 @@ mod private {
         for crate::server::conn::auto::UpgradeableConnection<'_, 'body, I, S, E>
     where
         S: hyper::service::Service<
-            http::Request<hyper::body::Incoming>,
-            Response = http::Response<B>,
-        >,
+                http::Request<hyper::body::Incoming>,
+                Response = http::Response<B>,
+            >,
         S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
         S::Future: 'static,
         I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
@@ -311,8 +314,8 @@ mod private {
 mod test {
     use super::*;
     use pin_project_lite::pin_project;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     pin_project! {
         #[derive(Debug)]
