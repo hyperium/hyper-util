@@ -24,7 +24,7 @@ futures-channel = { version = "0.3", optional = true }
 futures-util = { version = "0.3.16", default-features = false, optional = true }
 http = "1.0"
 http-body = "1.0.0"
-hyper = { git = "https://github.com/Voldemat/hyper.git", rev = "b026239" }
+hyper = { git = "https://github.com/Voldemat/hyper.git", rev = "b0262393" }
 ipnet = { version = "2.9", optional = true }
 libc = { version = "0.2", optional = true }
 percent-encoding = { version = "2.3", optional = true }
@@ -36,7 +36,7 @@ tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }
 
 [dev-dependencies]
-hyper = { git = "https://github.com/Voldemat/hyper.git", features = ["full"], rev = "b026239" }
+hyper = { git = "https://github.com/Voldemat/hyper.git", features = ["full"], rev = "b0262393" }
 bytes = "1"
 futures-util = { version = "0.3.16", default-features = false, features = ["alloc"] }
 http-body-util = "0.1.0"
