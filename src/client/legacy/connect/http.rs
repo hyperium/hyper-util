@@ -4,9 +4,9 @@ use std::future::Future;
 use std::io;
 use std::marker::PhantomData;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::pin::Pin;
+use std::pin::{Pin, pin};
 use std::sync::Arc;
-use std::task::{self, ready, Poll};
+use std::task::{self, Poll, ready};
 use std::time::Duration;
 
 use futures_util::future::Either;
@@ -17,7 +17,7 @@ use tokio::net::{TcpSocket, TcpStream};
 use tokio::time::Sleep;
 use tracing::{debug, trace, warn};
 
-use super::dns::{self, resolve, GaiResolver, Resolve};
+use super::dns::{self, GaiResolver, Resolve, resolve};
 use super::{Connected, Connection};
 use crate::rt::TokioIo;
 
@@ -114,11 +114,7 @@ impl TcpKeepaliveConfig {
         if let Some(retries) = self.retries {
             ka = Self::ka_with_retries(ka, retries, &mut dirty)
         };
-        if dirty {
-            Some(ka)
-        } else {
-            None
-        }
+        if dirty { Some(ka) } else { None }
     }
 
     #[cfg(
@@ -533,7 +529,7 @@ where
         let config = &self.config;
 
         let (host, port) = get_host_port(config, &dst)?;
-        let host = host.trim_start_matches('[').trim_end_matches(']');
+        let host = crate::client::strip_ipv6_brackets(host);
 
         // If the host is already an IP addr (v4 or v6),
         // skip resolving the dns and start connecting right away.
@@ -953,14 +949,9 @@ impl ConnectingTcp<'_> {
         match self.fallback {
             None => self.preferred.connect(self.config).await,
             Some(mut fallback) => {
-                let preferred_fut = self.preferred.connect(self.config);
-                futures_util::pin_mut!(preferred_fut);
-
-                let fallback_fut = fallback.remote.connect(self.config);
-                futures_util::pin_mut!(fallback_fut);
-
-                let fallback_delay = fallback.delay;
-                futures_util::pin_mut!(fallback_delay);
+                let preferred_fut = pin!(self.preferred.connect(self.config));
+                let fallback_fut = pin!(fallback.remote.connect(self.config));
+                let fallback_delay = pin!(fallback.delay);
 
                 let (result, future) =
                     match futures_util::future::select(preferred_fut, fallback_delay).await {
@@ -1169,8 +1160,8 @@ mod tests {
         use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener};
         use std::time::{Duration, Instant};
 
-        use super::dns;
         use super::ConnectingTcp;
+        use super::dns;
 
         let server4 = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = server4.local_addr().unwrap();
