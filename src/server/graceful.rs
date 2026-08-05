@@ -198,7 +198,7 @@ where
     }
 }
 
-#[cfg(feature = "server-auto")]
+#[cfg(any(feature = "http1", feature = "http2"))]
 impl<I, B, S, E> GracefulConnection for crate::server::conn::auto::Connection<'_, I, S, E>
 where
     S: hyper::service::Service<http::Request<hyper::body::Incoming>, Response = http::Response<B>>,
@@ -216,7 +216,7 @@ where
     }
 }
 
-#[cfg(feature = "server-auto")]
+#[cfg(any(feature = "http1", feature = "http2"))]
 impl<I, B, S, E> GracefulConnection
     for crate::server::conn::auto::UpgradeableConnection<'_, I, S, E>
 where
