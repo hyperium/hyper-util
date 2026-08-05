@@ -89,6 +89,8 @@ struct Config {
     ))]
     interface: Option<std::ffi::CString>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    mark: Option<u32>,
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     tcp_user_timeout: Option<Duration>,
 }
 
@@ -245,6 +247,8 @@ impl<R> HttpConnector<R> {
                     target_os = "watchos",
                 ))]
                 interface: None,
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                mark: None,
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: None,
             }),
@@ -420,6 +424,26 @@ impl<R> HttpConnector<R> {
             self.config_mut().interface = Some(interface);
         }
         self
+    }
+
+    /// Sets the mark on sockets produced by this connector.
+    ///
+    /// This sets the `SO_MARK` option on the socket (see [`man 7 socket`]
+    /// for details). The mark can be matched by policy routing rules and
+    /// packet filters.
+    ///
+    /// Setting the mark requires the binary to either have `CAP_NET_ADMIN`
+    /// or to be run as root.
+    ///
+    /// This function is only available on the following operating systems:
+    /// - Linux, including Android
+    /// - Fuchsia
+    ///
+    /// [`man 7 socket`]: https://man7.org/linux/man-pages/man7/socket.7.html
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[inline]
+    pub fn set_mark(&mut self, mark: Option<u32>) {
+        self.config_mut().mark = mark;
     }
 
     /// Sets the value of the TCP_USER_TIMEOUT option on the socket.
@@ -894,6 +918,14 @@ fn connect(
         }
     }
 
+    // On Linux-like systems, set the packet mark using `SO_MARK`.
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    if let Some(mark) = config.mark {
+        socket
+            .set_mark(mark)
+            .map_err(ConnectError::m("tcp set_mark error"))?;
+    }
+
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     if let Some(tcp_user_timeout) = &config.tcp_user_timeout {
         if let Err(e) = socket.set_tcp_user_timeout(Some(*tcp_user_timeout)) {
@@ -1298,6 +1330,12 @@ mod tests {
                             target_os = "watchos",
                         ))]
                         interface: None,
+                        #[cfg(any(
+                            target_os = "android",
+                            target_os = "fuchsia",
+                            target_os = "linux"
+                        ))]
+                        mark: None,
                         #[cfg(any(
                             target_os = "android",
                             target_os = "fuchsia",
