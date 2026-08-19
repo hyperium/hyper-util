@@ -798,6 +798,11 @@ impl<T: Poolable + 'static, K: Key> IdleTask<T, K> {
                         if let Ok(mut inner) = inner.lock() {
                             trace!("idle interval checking for expired");
                             inner.clear_expired();
+                            if inner.idle.is_empty() {
+                                inner.idle_interval_ref = None;
+                                trace!("pool empty, canceling idle interval");
+                                return;
+                            }
                         }
                     }
 
@@ -996,6 +1001,7 @@ mod tests {
             pool.locked().idle.get(&key).map(|entries| entries.len()),
             Some(3)
         );
+        assert!(pool.locked().idle_interval_ref.is_some());
 
         // Let the timer tick passed the expiration...
         tokio::time::sleep(Duration::from_millis(30)).await;
@@ -1005,6 +1011,7 @@ mod tests {
             pool.locked().idle.get(&key).map(|entries| entries.len()),
             Some(3)
         );
+        assert!(pool.locked().idle_interval_ref.is_some());
 
         // Now wait passed the minimum interval more
         tokio::time::sleep(Duration::from_millis(70)).await;
@@ -1012,6 +1019,11 @@ mod tests {
         tokio::task::yield_now().await;
 
         assert!(!pool.locked().idle.contains_key(&key));
+        assert!(pool.locked().idle_interval_ref.is_none());
+
+        // Insert new key and check timer is recreated
+        pool.pooled(c(key.clone()), Uniq(7));
+        assert!(pool.locked().idle_interval_ref.is_some());
     }
 
     #[tokio::test]
