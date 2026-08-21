@@ -3,7 +3,7 @@
 pub(crate) mod exec;
 #[cfg(feature = "client-legacy")]
 mod lazy;
-#[cfg(feature = "server")]
+#[cfg(any(feature = "server", feature = "client-legacy"))]
 // #[cfg(feature = "server-auto")]
 pub(crate) mod rewind;
 #[cfg(feature = "client-legacy")]

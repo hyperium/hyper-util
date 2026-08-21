@@ -4,10 +4,14 @@ use std::marker::{PhantomData, Unpin};
 use std::pin::Pin;
 use std::task::{self, Poll, ready};
 
+use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Uri};
 use hyper::rt::{Read, Write};
 use pin_project_lite::pin_project;
 use tower_service::Service;
+
+use super::super::{Connected, Connection};
+use crate::common::rewind::Rewind;
 
 /// Tunnel Proxy via HTTP CONNECT
 ///
@@ -54,7 +58,7 @@ pin_project! {
     }
 }
 
-type BoxTunneling<T> = Pin<Box<dyn Future<Output = Result<T, TunnelError>> + Send>>;
+type BoxTunneling<T> = Pin<Box<dyn Future<Output = Result<Rewind<T>, TunnelError>> + Send>>;
 
 impl<C> Tunnel<C> {
     /// Create a new Tunnel service.
@@ -122,7 +126,7 @@ where
     C::Response: Read + Write + Unpin + Send + 'static,
     C::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
-    type Response = C::Response;
+    type Response = Rewind<C::Response>;
     type Error = TunnelError;
     type Future = Tunneling<C::Future, C::Response>;
 
@@ -157,14 +161,28 @@ impl<F, T, E> Future for Tunneling<F, T>
 where
     F: Future<Output = Result<T, E>>,
 {
-    type Output = Result<T, TunnelError>;
+    type Output = Result<Rewind<T>, TunnelError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         self.project().fut.poll(cx)
     }
 }
 
-async fn tunnel<T>(mut conn: T, host: &str, port: u16, headers: &Headers) -> Result<T, TunnelError>
+impl<T> Connection for Rewind<T>
+where
+    T: Connection,
+{
+    fn connected(&self) -> Connected {
+        self.inner.connected()
+    }
+}
+
+async fn tunnel<T>(
+    mut conn: T,
+    host: &str,
+    port: u16,
+    headers: &Headers,
+) -> Result<Rewind<T>, TunnelError>
 where
     T: Read + Write + Unpin,
 {
@@ -213,19 +231,31 @@ where
         }
         pos += n;
 
-        let recvd = &buf[..pos];
-        if recvd.starts_with(b"HTTP/1.1 200") || recvd.starts_with(b"HTTP/1.0 200") {
-            if recvd.ends_with(b"\r\n\r\n") {
-                return Ok(conn);
+        let mut parsed_headers = [httparse::EMPTY_HEADER; 64];
+        let mut response = httparse::Response::new(&mut parsed_headers);
+
+        match response.parse(&buf[..pos]) {
+            Ok(httparse::Status::Complete(header_len)) => match response.code {
+                Some(200) => {
+                    return Ok(Rewind {
+                        pre: Some(Bytes::copy_from_slice(&buf[header_len..pos])),
+                        inner: conn,
+                    });
+                }
+                Some(407) => {
+                    return Err(TunnelError::ProxyAuthRequired);
+                }
+                _ => return Err(TunnelError::TunnelUnsuccessful),
+            },
+            Ok(httparse::Status::Partial) => {
+                if pos == buf.len() {
+                    return Err(TunnelError::ProxyHeadersTooLong);
+                }
             }
-            if pos == buf.len() {
+            Err(httparse::Error::TooManyHeaders) => {
                 return Err(TunnelError::ProxyHeadersTooLong);
             }
-        // else read more
-        } else if recvd.starts_with(b"HTTP/1.1 407") {
-            return Err(TunnelError::ProxyAuthRequired);
-        } else {
-            return Err(TunnelError::TunnelUnsuccessful);
+            Err(_) => return Err(TunnelError::TunnelUnsuccessful),
         }
     }
 }
@@ -253,5 +283,51 @@ impl std::error::Error for TunnelError {
             TunnelError::ConnectFailed(e) => Some(&**e),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Headers, TunnelError, tunnel};
+    use crate::rt::TokioIo;
+    use tokio::io::AsyncReadExt;
+
+    const REQUEST: &[u8] = b"CONNECT hyper.rs:443 HTTP/1.1\r\nHost: hyper.rs:443\r\n\r\n";
+
+    #[tokio::test]
+    async fn rejects_malformed_connect_response() {
+        let io = tokio_test::io::Builder::new()
+            .write(REQUEST)
+            .read(b"HTTP/1.1 2000 OK\r\n\r\n")
+            .build();
+
+        let result = tunnel(TokioIo::new(io), "hyper.rs", 443, &Headers::Empty).await;
+
+        match result {
+            Err(TunnelError::TunnelUnsuccessful) => {}
+            Err(error) => panic!("unexpected tunnel error: {error}"),
+            Ok(_) => panic!("malformed CONNECT response was accepted"),
+        }
+    }
+
+    #[tokio::test]
+    async fn preserves_bytes_after_connect_response() {
+        let io = tokio_test::io::Builder::new()
+            .write(REQUEST)
+            .read(b"HTTP/1.1 200 OK\r\n\r\nearly")
+            .build();
+
+        let io = tunnel(TokioIo::new(io), "hyper.rs", 443, &Headers::Empty)
+            .await
+            .expect("valid CONNECT response");
+
+        let mut io = TokioIo::new(io);
+        let mut early = [0; 5];
+
+        io.read_exact(&mut early)
+            .await
+            .expect("early tunneled bytes");
+
+        assert_eq!(&early, b"early");
     }
 }

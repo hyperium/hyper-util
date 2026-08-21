@@ -10,7 +10,7 @@ use std::{
 
 /// Combine a buffer with an IO, rewinding reads to use the buffer.
 #[derive(Debug)]
-pub(crate) struct Rewind<T> {
+pub struct Rewind<T> {
     pub(crate) pre: Option<Bytes>,
     pub(crate) inner: T,
 }
