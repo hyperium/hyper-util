@@ -212,22 +212,25 @@ where
         }
         pos += n;
 
-        let recvd = &buf[..pos];
-        if recvd.starts_with(b"HTTP/1.1 200") || recvd.starts_with(b"HTTP/1.0 200") {
-            if recvd.ends_with(b"\r\n\r\n") {
-                return Ok(conn);
+        let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
+        let mut res = httparse::Response::new(&mut headers);
+        match res.parse(&buf[..pos]) {
+            Ok(httparse::Status::Complete(_)) => match res.code {
+                Some(200) => return Ok(conn),
+                Some(407) => return Err(TunnelError::ProxyAuthRequired),
+                _ => return Err(TunnelError::TunnelUnsuccessful),
+            },
+            Ok(httparse::Status::Partial) => {
+                if pos == buf.len() {
+                    return Err(TunnelError::ProxyHeadersTooLong);
+                }
             }
-            if pos == buf.len() {
-                return Err(TunnelError::ProxyHeadersTooLong);
-            }
-        // else read more
-        } else if recvd.starts_with(b"HTTP/1.1 407") {
-            return Err(TunnelError::ProxyAuthRequired);
-        } else {
-            return Err(TunnelError::TunnelUnsuccessful);
+            Err(_) => return Err(TunnelError::TunnelUnsuccessful),
         }
     }
 }
+
+const MAX_HEADERS: usize = 100;
 
 impl std::fmt::Display for TunnelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

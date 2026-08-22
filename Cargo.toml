@@ -24,6 +24,7 @@ futures-channel = { version = "0.3", optional = true }
 futures-util = { version = "0.3.16", default-features = false, optional = true }
 http = "1.0"
 http-body = "1.0.0"
+httparse = { version = "1", optional = true }
 hyper = "1.9.0"
 ipnet = { version = "2.9", optional = true }
 libc = { version = "0.2", optional = true }
@@ -75,7 +76,7 @@ full = [
 ]
 
 client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
-client-legacy = ["client", "tokio/net", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util"]
+client-legacy = ["client", "tokio/net", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util", "dep:httparse"]
 client-pool = ["client", "dep:futures-util", "dep:tower-layer", "tokio/sync"]
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
 client-proxy-system = ["dep:system-configuration", "dep:windows-registry"]
