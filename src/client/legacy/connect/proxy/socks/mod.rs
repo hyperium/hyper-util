@@ -5,7 +5,6 @@ mod v4;
 pub use v4::{SocksV4, SocksV4Error};
 
 use pin_project_lite::pin_project;
-use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 

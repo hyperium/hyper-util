@@ -3,7 +3,6 @@
 pub mod upgrade;
 
 use hyper::service::HttpService;
-use std::future::Future;
 use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::pin::Pin;

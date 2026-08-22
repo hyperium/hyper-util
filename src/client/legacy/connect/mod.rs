@@ -26,7 +26,7 @@
 //! Or, fully written out:
 //!
 //! ```
-//! use std::{future::Future, net::SocketAddr, pin::Pin, task::{self, Poll}};
+//! use std::{net::SocketAddr, pin::Pin, task::{self, Poll}};
 //! use http::Uri;
 //! use tokio::net::TcpStream;
 //! use tower_service::Service;
@@ -302,7 +302,6 @@ where
 
 pub(super) mod sealed {
     use std::error::Error as StdError;
-    use std::future::Future;
 
     use ::http::Uri;
     use hyper::rt::{Read, Write};

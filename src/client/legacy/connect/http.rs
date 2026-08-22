@@ -1,6 +1,5 @@
 use std::error::Error as StdError;
 use std::fmt;
-use std::future::Future;
 use std::io;
 use std::marker::PhantomData;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};

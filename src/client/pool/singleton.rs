@@ -159,7 +159,6 @@ where
 /// local to the future that was dropped.
 mod internal {
     use std::fmt;
-    use std::future::Future;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex, Weak};
     use std::task::{self, Poll, Waker};
@@ -507,7 +506,6 @@ mod internal {
 #[cfg(test)]
 mod tests {
     use std::error::Error;
-    use std::future::Future;
     use std::pin::Pin;
     use std::task::Poll;
 

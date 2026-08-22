@@ -1,5 +1,4 @@
 use pin_project_lite::pin_project;
-use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 use tower_service::Service;

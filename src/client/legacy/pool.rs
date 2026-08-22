@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use std::error::Error as StdError;
 use std::fmt::{self, Debug};
-use std::future::Future;
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
@@ -841,7 +840,6 @@ impl<T> WeakOpt<T> {
 #[cfg(test)]
 mod tests {
     use std::fmt::Debug;
-    use std::future::Future;
     use std::hash::Hash;
     use std::pin::Pin;
     use std::task::{self, Poll};

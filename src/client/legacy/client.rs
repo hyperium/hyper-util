@@ -6,7 +6,7 @@
 
 use std::error::Error as StdError;
 use std::fmt;
-use std::future::{Future, poll_fn};
+use std::future::poll_fn;
 use std::pin::Pin;
 use std::task::{self, Poll};
 use std::time::Duration;

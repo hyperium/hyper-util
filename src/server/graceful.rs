@@ -8,7 +8,6 @@
 
 use std::{
     fmt::{self, Debug},
-    future::Future,
     pin::Pin,
     task::{self, Poll},
 };

@@ -1,6 +1,5 @@
 use std::error::Error as StdError;
-use std::future::Future;
-use std::marker::{PhantomData, Unpin};
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{self, Poll, ready};
 

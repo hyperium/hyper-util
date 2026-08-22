@@ -52,7 +52,6 @@
 //! [tokio-async-docs]: https://docs.rs/tokio/latest/tokio/#asynchronous-io
 
 use std::{
-    future::Future,
     pin::Pin,
     task::{Context, Poll},
     time::{Duration, Instant},

@@ -46,7 +46,6 @@ pub use self::internal::Negotiate;
 pub use self::internal::Negotiated;
 
 mod internal {
-    use std::future::Future;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
     use std::task::{self, Poll, ready};

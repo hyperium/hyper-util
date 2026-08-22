@@ -20,7 +20,6 @@ pub use self::internal::Cached;
 mod internal {
     use std::collections::VecDeque;
     use std::fmt;
-    use std::future::Future;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex, Weak};
     use std::task::{self, Poll, Waker, ready};
@@ -631,7 +630,6 @@ mod tests {
     // (FIFO), so a waiter cannot be starved by later arrivals.
     #[tokio::test]
     async fn test_waiters_woken_in_fifo_order() {
-        use std::future::Future;
         use std::task::{Context, Poll, Waker};
 
         let (mock, mut handle) = tower_test::mock::pair::<u32, &'static str>();
@@ -697,7 +695,6 @@ mod tests {
 
     #[tokio::test]
     async fn dropped_racing_future_cancels_waiter() {
-        use std::future::Future;
         use std::task::{Context, Poll, Waker};
 
         let (mock, mut handle) = tower_test::mock::pair::<u32, &'static str>();
@@ -825,7 +822,6 @@ mod tests {
 
     #[tokio::test]
     async fn idle_return_wakes_pending_poll_ready() {
-        use std::future::Future;
         use std::sync::atomic::AtomicBool;
         use std::task::{Context, Waker};
 
