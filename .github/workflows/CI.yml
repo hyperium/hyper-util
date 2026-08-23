@@ -68,17 +68,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Resolve MSRV aware dependencies
-        run: |
-          cargo update
-        env:
-          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
       - name: Install Rust (${{ matrix.rust }})
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v2
       - run: cargo check --features full
 
   miri:
