@@ -706,11 +706,15 @@ mod win {
         }
 
         if let Ok(val) = settings.get_string("ProxyServer") {
+            let (http, https, all) = parse_proxy_server(&val);
+            if builder.all.is_empty() {
+                builder.all = all;
+            }
             if builder.http.is_empty() {
-                builder.http = val.clone();
+                builder.http = http;
             }
             if builder.https.is_empty() {
-                builder.https = val;
+                builder.https = https;
             }
         }
 
@@ -719,6 +723,61 @@ mod win {
                 builder.no = normalize_proxy_override(&val);
             }
         }
+    }
+
+    /// Parse a Windows `ProxyServer` registry value.
+    ///
+    /// The value can be in either of two forms:
+    ///
+    /// - **Single proxy**: `127.0.0.1:8080` — applies to all schemes.
+    /// - **Per-scheme (WinINET)**: `http=host:port;https=host:port;socks=host:port`
+    ///   Each entry is separated by `;`. Schemes `http`, `https`, and `socks`
+    ///   are recognized; other schemes (e.g. `ftp`) are ignored.
+    ///
+    /// Per WinINET semantics, a `socks=` entry applies to all schemes, so it is
+    /// returned as the `all` proxy. A bare entry (no scheme prefix) sets both
+    /// `http` and `https`.
+    pub(super) fn parse_proxy_server(val: &str) -> (String, String, String) {
+        let mut http = String::new();
+        let mut https = String::new();
+        let mut all = String::new();
+
+        for entry in val.split(';') {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+
+            // Split on the first '=' to separate scheme from address
+            if let Some(eq_pos) = entry.find('=') {
+                let scheme = entry[..eq_pos].to_lowercase();
+                let address = &entry[eq_pos + 1..];
+
+                match scheme.as_str() {
+                    "http" if http.is_empty() => http = address.to_string(),
+                    "https" if https.is_empty() => https = address.to_string(),
+                    "socks" | "socks5" | "socks4" if all.is_empty() => {
+                        // SOCKS applies to all schemes per WinINET semantics
+                        all = address.to_string();
+                    }
+                    // Other schemes (ftp, etc.) are ignored
+                    _ => {}
+                }
+            } else {
+                // Bare address (no scheme prefix) — applies to all
+                if all.is_empty() {
+                    all = entry.to_string();
+                }
+            }
+        }
+
+        // A bare proxy server (no scheme) sets both http and https
+        if http.is_empty() && https.is_empty() && !all.is_empty() {
+            http = all.clone();
+            https = all;
+        }
+
+        (http, https, all)
     }
 }
 
@@ -806,6 +865,66 @@ mod tests {
         for host in &should_match {
             assert!(no_proxy.contains(host), "should contain {host:?}");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_parse_proxy_server_single() {
+        // Single proxy server (no scheme) applies to all
+        let (http, https, all) = win::parse_proxy_server("127.0.0.1:8080");
+        assert_eq!(http, "127.0.0.1:8080");
+        assert_eq!(https, "127.0.0.1:8080");
+        assert_eq!(all, "127.0.0.1:8080");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_parse_proxy_server_per_scheme() {
+        // Per-scheme WinINET format
+        let (http, https, all) = win::parse_proxy_server("http=127.0.0.1:8080;https=127.0.0.1:8443");
+        assert_eq!(http, "127.0.0.1:8080");
+        assert_eq!(https, "127.0.0.1:8443");
+        assert!(all.is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_parse_proxy_server_socks() {
+        // SOCKS proxy applies to all schemes
+        let (http, https, all) = win::parse_proxy_server("socks=127.0.0.1:1080");
+        assert_eq!(all, "127.0.0.1:1080");
+        assert_eq!(http, "127.0.0.1:1080");
+        assert_eq!(https, "127.0.0.1:1080");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_parse_proxy_server_mixed() {
+        // Mixed: http and https per-scheme, socks as all, ftp ignored
+        let (http, https, all) = win::parse_proxy_server(
+            "http=10.0.0.1:8080;https=10.0.0.1:8443;socks=10.0.0.1:1080;ftp=10.0.0.1:21",
+        );
+        assert_eq!(http, "10.0.0.1:8080");
+        assert_eq!(https, "10.0.0.1:8443");
+        assert_eq!(all, "10.0.0.1:1080");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_parse_proxy_server_case_insensitive_scheme() {
+        let (http, https, all) = win::parse_proxy_server("HTTP=10.0.0.1:8080;HTTPS=10.0.0.1:8443");
+        assert_eq!(http, "10.0.0.1:8080");
+        assert_eq!(https, "10.0.0.1:8443");
+        assert!(all.is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_parse_proxy_server_empty() {
+        let (http, https, all) = win::parse_proxy_server("");
+        assert!(http.is_empty());
+        assert!(https.is_empty());
+        assert!(all.is_empty());
     }
 
     #[cfg(all(feature = "client-proxy-system", windows))]
