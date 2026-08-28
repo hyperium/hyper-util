@@ -607,7 +607,7 @@ pub enum Error {
 
 impl Error {
     pub(super) fn is_canceled(&self) -> bool {
-        matches!(self, Error::CheckedOutClosedValue)
+        matches!(self, Error::CheckoutNoLongerWanted)
     }
 }
 
