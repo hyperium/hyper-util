@@ -60,9 +60,6 @@ use std::{
 use hyper::rt::{Executor, Sleep, Timer};
 use pin_project_lite::pin_project;
 
-#[cfg(feature = "tracing")]
-use tracing::instrument::Instrument;
-
 pub use self::{with_hyper_io::WithHyperIo, with_tokio_io::WithTokioIo};
 
 mod with_hyper_io;
@@ -107,10 +104,6 @@ where
     Fut::Output: Send + 'static,
 {
     fn execute(&self, fut: Fut) {
-        #[cfg(feature = "tracing")]
-        tokio::spawn(fut.in_current_span());
-
-        #[cfg(not(feature = "tracing"))]
         tokio::spawn(fut);
     }
 }
