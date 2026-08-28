@@ -1500,3 +1500,56 @@ async fn test_successful_connection() {
     // Verify the response status is 200 OK.
     assert_eq!(response.status(), 200);
 }
+
+#[cfg(unix)]
+#[cfg(feature = "http1")]
+#[test]
+fn client_over_unix_socket() {
+    use std::os::unix::net::UnixListener;
+
+    use hyper_util::client::legacy::connect::UnixConnector;
+
+    let _ = pretty_env_logger::try_init();
+
+    let path = std::env::temp_dir().join(format!(
+        "hyper-util-unix-connector-test-{}.sock",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let listener = UnixListener::bind(&path).unwrap();
+
+    let client =
+        Client::builder(TokioExecutor::new()).build::<_, Empty<Bytes>>(UnixConnector::new(&path));
+
+    thread::spawn(move || {
+        let mut sock = listener.accept().unwrap().0;
+        sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        sock.set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut buf = [0u8; 4096];
+        let n = sock.read(&mut buf).unwrap();
+        let req = s(&buf[..n]);
+        assert!(req.starts_with("GET /unix HTTP/1.1\r\n"));
+        assert!(req.contains("\r\nhost: localhost\r\n"));
+        sock.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 5\r\n\r\nhello")
+            .unwrap();
+    });
+
+    let rt = runtime();
+    rt.block_on(async {
+        let res = client
+            .request(
+                Request::builder()
+                    .uri("http://localhost/unix")
+                    .body(Empty::<Bytes>::new())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"hello");
+    });
+
+    std::fs::remove_file(&path).unwrap();
+}

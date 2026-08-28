@@ -4,6 +4,8 @@
 //!
 //! - A default [`HttpConnector`][] that does DNS resolution and establishes
 //!   connections over TCP.
+//! - A [`UnixConnector`][] that establishes connections over Unix domain
+//!   sockets (only available on Unix platforms).
 //! - Types to build custom connectors.
 //!
 //! # Connectors
@@ -57,6 +59,7 @@
 //! better starting place to extend from.
 //!
 //! [`HttpConnector`]: HttpConnector
+//! [`UnixConnector`]: UnixConnector
 //! [`Service`]: tower_service::Service
 //! [`Uri`]: ::http::Uri
 //! [`Read`]: hyper::rt::Read
@@ -74,11 +77,15 @@ use ::http::Extensions;
 
 #[cfg(feature = "tokio")]
 pub use self::http::{HttpConnector, HttpInfo};
+#[cfg(all(unix, feature = "tokio"))]
+pub use self::unix::UnixConnector;
 
 #[cfg(feature = "tokio")]
 pub mod dns;
 #[cfg(feature = "tokio")]
 mod http;
+#[cfg(all(unix, feature = "tokio"))]
+mod unix;
 
 pub mod proxy;
 
