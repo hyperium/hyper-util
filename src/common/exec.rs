@@ -24,6 +24,7 @@ impl Exec {
         Exec::Executor(Arc::new(inner))
     }
 
+    #[track_caller]
     pub(crate) fn execute<F>(&self, fut: F)
     where
         F: Future<Output = ()> + Send + 'static,
@@ -46,6 +47,7 @@ impl<F> hyper::rt::Executor<F> for Exec
 where
     F: Future<Output = ()> + Send + 'static,
 {
+    #[track_caller]
     fn execute(&self, fut: F) {
         Exec::execute(self, fut);
     }
