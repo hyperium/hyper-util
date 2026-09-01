@@ -6,6 +6,8 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::pin::{Pin, pin};
 use std::sync::Arc;
+#[cfg(not(miri))]
+use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 use std::task::Poll;
 use std::thread;
@@ -18,6 +20,12 @@ use futures_util::{self, Stream};
 use http_body_util::BodyExt;
 use http_body_util::{Empty, Full, StreamBody};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(not(miri))]
+use tracing::Instrument;
+#[cfg(not(miri))]
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+#[cfg(not(miri))]
+use tracing_subscriber::registry::LookupSpan;
 
 use hyper::Request;
 use hyper::body::Bytes;
@@ -149,6 +157,139 @@ async fn drop_client_closes_idle_connections() {
     let t = pin!(tokio::time::sleep(Duration::from_millis(100)).map(|_| panic!("time out")));
     let close = closes.into_future().map(|(opt, _)| opt.expect("closes"));
     future::select(t, close).await;
+    t1.await.unwrap();
+}
+
+#[cfg(not(miri))]
+#[derive(Clone, Default)]
+struct ClosedSpans(Arc<Mutex<Vec<String>>>);
+
+#[cfg(not(miri))]
+impl ClosedSpans {
+    // records the name of every span that closes until the guard is dropped
+    fn record() -> (ClosedSpans, tracing::subscriber::DefaultGuard) {
+        let spans = ClosedSpans::default();
+        let guard =
+            tracing::subscriber::set_default(tracing_subscriber::registry().with(spans.clone()));
+        (spans, guard)
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.0.lock().unwrap().iter().any(|span| span == name)
+    }
+}
+
+#[cfg(not(miri))]
+impl<S> Layer<S> for ClosedSpans
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_close(&self, id: tracing::Id, ctx: Context<'_, S>) {
+        let name = ctx.span(&id).unwrap().name();
+        self.0.lock().unwrap().push(name.to_owned());
+    }
+}
+
+#[cfg(not(miri))]
+#[cfg(feature = "http1")]
+#[tokio::test]
+async fn request_span_closes_while_conn_idle() {
+    let _ = pretty_env_logger::try_init();
+
+    let (closed_spans, _guard) = ClosedSpans::record();
+
+    let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = server.local_addr().unwrap();
+    let (tx1, rx1) = oneshot::channel();
+
+    let t1 = tokio::spawn(async move {
+        let mut sock = server.accept().await.unwrap().0;
+        let mut buf = [0; 4096];
+        sock.read(&mut buf).await.unwrap();
+        sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        let _ = tx1.send(());
+
+        // prevent this thread from closing until end of test, so the connection
+        // stays open and idle until Client is dropped
+        if let Ok(n) = sock.read(&mut buf).await {
+            assert_eq!(n, 0);
+        }
+    });
+
+    let client = Client::builder(TokioExecutor::new()).build_http::<Empty<Bytes>>();
+    let req = Request::builder()
+        .uri(&*format!("http://{addr}/a"))
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+
+    async {
+        let res = client.request(req).await.unwrap();
+        assert_eq!(res.status(), hyper::StatusCode::OK);
+        res.into_body().collect().await.unwrap();
+    }
+    .instrument(tracing::info_span!("test.request"))
+    .await;
+
+    rx1.await.unwrap();
+
+    // the idle connection must not hold the request's span open
+    assert!(closed_spans.contains("test.request"));
+
+    drop(client);
+    t1.await.unwrap();
+}
+
+#[cfg(not(miri))]
+#[cfg(feature = "http2")]
+#[tokio::test]
+async fn request_span_closes_while_h2_conn_idle() {
+    use http::Response;
+    use hyper::service::service_fn;
+
+    let _ = pretty_env_logger::try_init();
+
+    let (closed_spans, _guard) = ClosedSpans::record();
+
+    let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = server.local_addr().unwrap();
+
+    let t1 = tokio::spawn(async move {
+        let stream = TokioIo::new(server.accept().await.unwrap().0);
+        // serves until the Client is dropped at the end of the test
+        let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+            .serve_connection(
+                stream,
+                service_fn(|_| async {
+                    Ok::<_, hyper::Error>(Response::new(Empty::<Bytes>::new()))
+                }),
+            )
+            .await;
+    });
+
+    // prior knowledge, so the handshake happens on the first request
+    let client = Client::builder(TokioExecutor::new())
+        .http2_only(true)
+        .build_http::<Empty<Bytes>>();
+    let req = Request::builder()
+        .uri(&*format!("http://{addr}/a"))
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+
+    async {
+        let res = client.request(req).await.unwrap();
+        assert_eq!(res.status(), hyper::StatusCode::OK);
+        res.into_body().collect().await.unwrap();
+    }
+    .instrument(tracing::info_span!("test.request"))
+    .await;
+
+    // neither our dispatcher nor the one hyper spawns during the handshake may
+    // hold the request's span open
+    assert!(closed_spans.contains("test.request"));
+
+    drop(client);
     t1.await.unwrap();
 }
 

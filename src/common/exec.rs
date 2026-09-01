@@ -30,6 +30,11 @@ impl Exec {
     {
         match *self {
             Exec::Executor(ref e) => {
+                #[cfg(feature = "tracing")]
+                tracing::dispatcher::with_default(&tracing::Dispatch::none(), || {
+                    e.execute(Box::pin(fut));
+                });
+                #[cfg(not(feature = "tracing"))]
                 e.execute(Box::pin(fut));
             }
         }
