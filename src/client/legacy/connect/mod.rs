@@ -137,6 +137,14 @@ impl PoisonPill {
     }
 }
 
+#[cfg(feature = "http2")]
+impl hyper::client::conn::http2::KeepAliveObserver for PoisonPill {
+    fn on_reuse_timeout(&self) {
+        self.poison();
+        tracing::debug!(poison_pill = ?self, "HTTP/2 keep-alive reuse timeout; connection retired");
+    }
+}
+
 pub(super) struct Extra(Box<dyn ExtraInner>);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
