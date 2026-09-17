@@ -45,6 +45,7 @@ tokio = { version = "1", features = ["macros", "test-util", "signal", "net", "io
 tokio-test = "0.4"
 tower-test = "0.4"
 pretty_env_logger = "0.5"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
 pnet_datalink = "0.35.0"
@@ -58,7 +59,7 @@ windows-registry = { version = ">=0.3, <0.7", optional = true }
 [features]
 default = []
 
-# Shorthand to enable everything
+# Shorthand to enable all standard features (excluding temporary opt-ins).
 full = [
     "client",
     "client-legacy",
@@ -93,6 +94,9 @@ http2 = ["hyper/http2"]
 tokio = ["dep:tokio", "tokio/rt", "tokio/time"]
 
 tracing = ["dep:tracing"]
+
+# Temporary compatibility opt-in, deliberately excluded from `full`.
+rt-tracing-exec-force = ["tokio", "tracing"]
 
 # internal features used in CI
 __internal_happy_eyeballs_tests = []
