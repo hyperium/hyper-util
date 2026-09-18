@@ -14,24 +14,24 @@ use tracing::instrument::{Instrument, Instrumented};
 /// ```
 /// # #[cfg(feature = "tokio")]
 /// # {
-/// use hyper_util::rt::{TokioExecutor, TracingExecutor};
+/// use hyper_util::rt::{TokioExecutor, CurrentSpanExecutor};
 ///
-/// let executor = TracingExecutor::new(TokioExecutor::new());
+/// let executor = CurrentSpanExecutor::new(TokioExecutor::new());
 /// # }
 /// ```
 #[derive(Clone, Copy, Debug, Default)]
-pub struct TracingExecutor<E> {
+pub struct CurrentSpanExecutor<E> {
     inner: E,
 }
 
-impl<E> TracingExecutor<E> {
+impl<E> CurrentSpanExecutor<E> {
     /// Wrap an executor to propagate the current tracing span to its futures.
     pub fn new(inner: E) -> Self {
         Self { inner }
     }
 }
 
-impl<E, F> Executor<F> for TracingExecutor<E>
+impl<E, F> Executor<F> for CurrentSpanExecutor<E>
 where
     E: Executor<Instrumented<F>>,
     F: Future,
@@ -43,7 +43,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::TracingExecutor;
+    use super::CurrentSpanExecutor;
     use hyper::rt::Executor;
     use std::{cell::RefCell, future::poll_fn, pin::Pin, task::Poll};
 
@@ -70,7 +70,7 @@ mod tests {
         // does not impose Send or 'static bounds on the inner executor.
         let polls = RefCell::new(0);
         let inner = DeferredExecutor::default();
-        let executor = construction_span.in_scope(|| TracingExecutor::new(&inner));
+        let executor = construction_span.in_scope(|| CurrentSpanExecutor::new(&inner));
         execution_span.in_scope(|| {
             executor.execute(poll_fn(|_| {
                 assert_eq!(tracing::Span::current().id(), execution_span.id());
