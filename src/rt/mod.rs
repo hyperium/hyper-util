@@ -3,7 +3,7 @@
 #[cfg(feature = "tracing")]
 mod tracing;
 #[cfg(feature = "tracing")]
-pub use self::tracing::TracingExecutor;
+pub use self::tracing::{CurrentSpanExecutor, WithSpanExecutor};
 
 #[cfg(feature = "client-legacy")]
 mod io;
