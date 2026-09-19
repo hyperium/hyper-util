@@ -78,6 +78,19 @@ impl<E> WithSpanExecutor<E> {
     pub fn new(inner: E, span: Span) -> Self {
         Self { inner, span }
     }
+
+    /// Wrap an executor to propagate the current tracing span to its futures.
+    ///
+    /// This will instrument futures with the span that is active at the call-site of _this_
+    /// function. Use [`CurrentSpanExecutor<E>`] if you would prefer to propagate the current span
+    /// when [`Executor::execute()`] is called, rather than span that is active when initializating
+    /// the executor.
+    pub fn current(inner: E) -> Self {
+        Self {
+            inner,
+            span: Span::current(),
+        }
+    }
 }
 
 impl<E, F> Executor<F> for WithSpanExecutor<E>
@@ -160,6 +173,41 @@ mod tests {
             executor.execute(poll_fn(|_| {
                 // Execution happens within the given span.
                 assert_eq!(tracing::Span::current().id(), with_span.id());
+                *polls.borrow_mut() += 1;
+                if *polls.borrow() == 1 {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(())
+                }
+            }));
+        });
+
+        let _entered = polling_span.enter();
+        let mut task = tokio_test::task::spawn(inner.future.borrow_mut().take().unwrap());
+        assert!(task.poll().is_pending());
+        assert_eq!(tracing::Span::current().id(), polling_span.id());
+        assert!(task.poll().is_ready());
+        assert_eq!(tracing::Span::current().id(), polling_span.id());
+        assert_eq!(*polls.borrow(), 2);
+    }
+
+    #[test]
+    fn with_span_executor_current_propagates_construction_span() {
+        let _subscriber = tracing::subscriber::set_default(tracing_subscriber::registry());
+        let construction_span = tracing::info_span!("construction");
+        let execution_span = tracing::info_span!("execution");
+        let polling_span = tracing::info_span!("polling");
+        assert!(execution_span.id().is_some());
+
+        // Borrowing a local executor and future also checks that the wrapper
+        // does not impose Send or 'static bounds on the inner executor.
+        let polls = RefCell::new(0);
+        let inner = DeferredExecutor::default();
+        let executor = construction_span.in_scope(|| WithSpanExecutor::current(&inner));
+        execution_span.in_scope(|| {
+            executor.execute(poll_fn(|_| {
+                // Execution happens within the given span.
+                assert_eq!(tracing::Span::current().id(), construction_span.id());
                 *polls.borrow_mut() += 1;
                 if *polls.borrow() == 1 {
                     Poll::Pending
