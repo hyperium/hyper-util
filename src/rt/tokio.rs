@@ -71,7 +71,13 @@ mod with_tokio_io;
 /// Future executor that utilises `tokio` threads.
 ///
 /// Spawned futures do not inherit the current tracing span, even when the
-/// `tracing` feature is enabled.
+/// `tracing` feature is enabled. To propagate spans, wrap this executor in
+/// one of the components from [`rt::tracing`](crate::rt::tracing), such as
+/// [`CurrentSpanExecutor`](crate::rt::CurrentSpanExecutor) (available with
+/// the `tracing` feature).
+///
+/// See the module-level documentation of [`rt::tracing`](crate::rt::tracing)
+/// for more information about propagating [`tracing`] spans to spawned tasks.
 ///
 /// The temporary `rt-tracing-exec-force` feature restores propagation of the
 /// current span for libraries that do not allow customizing their executor.
