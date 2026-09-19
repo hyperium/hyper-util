@@ -1,3 +1,73 @@
+//! Runtime components for use with [`tracing`].
+//!
+//! This module provides [`Executor`] implementations that configure
+//! instrumentation of spawned futures. These [`Executor`]s can propagate
+//! tracing [`Span`]s to futures spawned onto the async runtime. See the
+//! crate-level documentation of [`tracing`] for [more information] about spans.
+//!
+//! # Choosing an [`Executor`].
+//!
+//! Hyper spawns [`Future`]s onto an [`Executor`], to avoid tightly coupling
+//! APIs to any particular async runtime. This includes background tasks that
+//! might help service I/O for the lifetime of a connection, for example.
+//!
+//! Some [`Subscriber`][tracing::subscriber] implementations have different
+//! semantics regarding the lifecycle of [`Span`]s. Integrations with
+//! OpenTelemetry collectors, for example, might not emit the events within
+//! the context of a span until it is closed. Conversely, subscribers that
+//! print traces to the terminal may not have to contend with these details when
+//! instrumenting long-lived tasks that run in the background.
+//!
+//! This module provides different executors to help pass tracing context in
+//! the manner appropriate for your application. For most typical applications,
+//! [`CurrentSpanExecutor<E>`] should suffice.
+//!
+//! # Examples
+//!
+//! Run spawned tasks within a provided span.
+//!
+//! ```
+//! # #[cfg(feature = "tokio")]
+//! # {
+//! use hyper_util::rt::{TokioExecutor, WithSpanExecutor};
+//!
+//! let span = tracing::info_span!("example");
+//! let executor = WithSpanExecutor::new(TokioExecutor::new(), span);
+//! # }
+//! ```
+//!
+//! Run spawned tasks within the current span when [`Executor::execute()`] is
+//! called.
+//!
+//! ```
+//! # #[cfg(feature = "tokio")]
+//! # {
+//! use hyper_util::rt::{TokioExecutor, CurrentSpanExecutor};
+//!
+//! let executor = CurrentSpanExecutor::new(TokioExecutor::new());
+//! # }
+//! ```
+//!
+//! Run spawned tasks within distinct spans that are marked as following from
+//! the active span when [`Executor::execute()`] is called.
+//!
+//! ```
+//! # #[cfg(feature = "tokio")]
+//! # {
+//! use hyper_util::rt::{MkSpanExecutor, TokioExecutor};
+//! use tracing::{info_span, Span};
+//!
+//! let mk = || {
+//!     let span = info_span!("example");
+//!     span.follows_from(Span::current());
+//!     span
+//! };
+//! let executor = MkSpanExecutor::new(TokioExecutor::new(), mk);
+//! # }
+//! ```
+//!
+//! [more information]: tracing#spans-1
+
 use hyper::rt::Executor;
 use tracing::{
     Span,
