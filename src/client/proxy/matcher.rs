@@ -692,6 +692,43 @@ mod win {
             .replace("*.", "")
     }
 
+    pub(super) fn parse_proxy_server(value: &str) -> (Option<String>, Option<String>) {
+        let value = value.trim();
+        if value.is_empty() {
+            return (None, None);
+        }
+
+        // A value without an equals sign is a single proxy for all protocols.
+        if !value.contains('=') {
+            let proxy = value.to_owned();
+            return (Some(proxy.clone()), Some(proxy));
+        }
+
+        let mut all = None;
+        let mut http = None;
+        let mut https = None;
+
+        for entry in value.split(';') {
+            let Some((scheme, proxy)) = entry.split_once('=') else {
+                continue;
+            };
+            let proxy = proxy.trim();
+            if proxy.is_empty() {
+                continue;
+            }
+
+            if scheme.eq_ignore_ascii_case("http") {
+                http = Some(proxy.to_owned());
+            } else if scheme.eq_ignore_ascii_case("https") {
+                https = Some(proxy.to_owned());
+            } else if scheme.eq_ignore_ascii_case("socks") {
+                all = Some(format!("socks5://{proxy}"));
+            }
+        }
+
+        (http.or_else(|| all.clone()), https.or(all))
+    }
+
     pub(super) fn with_system(builder: &mut super::Builder) {
         let settings = if let Ok(settings) = windows_registry::CURRENT_USER
             .open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
@@ -706,11 +743,16 @@ mod win {
         }
 
         if let Ok(val) = settings.get_string("ProxyServer") {
+            let (http, https) = parse_proxy_server(&val);
             if builder.http.is_empty() {
-                builder.http = val.clone();
+                if let Some(http) = http {
+                    builder.http = http;
+                }
             }
             if builder.https.is_empty() {
-                builder.https = val;
+                if let Some(https) = https {
+                    builder.https = https;
+                }
             }
         }
 
@@ -825,6 +867,35 @@ mod tests {
 
         let subnet = NoProxy::from_string(&win::normalize_proxy_override("192.168.1.*"));
         assert!(!subnet.contains("192.168.2.42"));
+    }
+
+    #[cfg(all(feature = "client-proxy-system", windows))]
+    #[test]
+    fn test_windows_proxy_server_per_scheme() {
+        let (http, https) = win::parse_proxy_server(
+            "socks=127.0.0.1:1080;ftp=127.0.0.1:2121;http=127.0.0.1:8080;https=127.0.0.1:8443",
+        );
+
+        assert_eq!(http.as_deref(), Some("127.0.0.1:8080"));
+        assert_eq!(https.as_deref(), Some("127.0.0.1:8443"));
+    }
+
+    #[cfg(all(feature = "client-proxy-system", windows))]
+    #[test]
+    fn test_windows_proxy_server_socks_fallback() {
+        let (http, https) = win::parse_proxy_server("socks=127.0.0.1:1080");
+
+        assert_eq!(http.as_deref(), Some("socks5://127.0.0.1:1080"));
+        assert_eq!(https.as_deref(), Some("socks5://127.0.0.1:1080"));
+    }
+
+    #[cfg(all(feature = "client-proxy-system", windows))]
+    #[test]
+    fn test_windows_proxy_server_single_proxy() {
+        let (http, https) = win::parse_proxy_server("127.0.0.1:8080");
+
+        assert_eq!(http.as_deref(), Some("127.0.0.1:8080"));
+        assert_eq!(https.as_deref(), Some("127.0.0.1:8080"));
     }
 
     macro_rules! p {
