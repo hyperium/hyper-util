@@ -50,7 +50,11 @@
 //!   facilitate migrating telemetry from v0.1.20. If set,
 //!   [`rt::tokio::TokioExecutor<I>`] will continue to propagate the current
 //!   [`tracing::Span`] to spawned tasks. This may be removed in a future
-//!   release.
+//!   release. Note that this feature is **not** included in the `full`
+//!   feature set, and must be explicitly enabled. See
+//!   [#322](https://github.com/hyperium/hyper-util/pull/322) and
+//!   [#323](https://github.com/hyperium/hyper-util/pull/323) for more
+//!   information.
 
 #[cfg(feature = "client")]
 pub mod client;
