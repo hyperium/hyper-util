@@ -61,7 +61,7 @@ use hyper::rt::{Sleep, Timer};
 use pin_project_lite::pin_project;
 
 pub use self::{
-    executor::{TokioExecutor, TokioLocalExecutor},
+    executor::{TokioExecutor, TokioHandleExecutor, TokioLocalExecutor},
     with_hyper_io::WithHyperIo,
     with_tokio_io::WithTokioIo,
 };
