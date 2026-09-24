@@ -45,7 +45,9 @@
 //! * `tokio`: Enable [`rt::tokio`] runtime components to integrate with
 //!   [`tokio`]. See the module-level documentation of [`rt::tokio`] for more
 //!   information.
-//! * `tracing`: Enable [`tracing`] integration.
+//! * `tracing`: Enable [`rt::tracing`] runtime components to integrate with
+//!   [`tracing`]. See the module-level documentation of [`rt::tracing`] for
+//!   more information.
 //! * `rt-tracing-exec-force`: A temporary compatibility opt-in feature to
 //!   facilitate migrating telemetry from v0.1.20. If set,
 //!   [`rt::tokio::TokioExecutor<I>`] will continue to propagate the current
