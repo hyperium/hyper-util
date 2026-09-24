@@ -543,6 +543,9 @@ where
                         Either::Left(Box::pin(async move {
                             let tx = if is_h2 {
                                 #[cfg(feature = "http2")] {
+                                    // This builder and observer belong only to this connection.
+                                    let mut h2_builder = h2_builder;
+                                    h2_builder.keep_alive_observer(connected.poisoned.clone());
                                     let (mut tx, conn) =
                                         h2_builder.handshake(io).await.map_err(Error::tx)?;
 
@@ -1474,6 +1477,26 @@ impl Builder {
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_keep_alive_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.h2_builder.keep_alive_timeout(timeout);
+        self
+    }
+
+    /// Stops reusing an HTTP/2 connection when its keep-alive PING remains
+    /// unacknowledged for this duration.
+    ///
+    /// The connection is permanently retired from the pool, even if a late ACK
+    /// arrives. Existing requests and response bodies continue under the original
+    /// `http2_keep_alive_timeout`. Subsequent requests can establish a replacement;
+    /// no connection is opened proactively and no request is replayed by this option.
+    /// Requests that already checked out the old connection may still use it.
+    ///
+    /// Defaults to `None` (disabled). Does nothing if keep-alive is disabled.
+    /// When enabled, the duration must be greater than zero and less than the
+    /// final hard timeout; otherwise connection handshake panics. Requires a timer.
+    #[cfg(feature = "tokio")]
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
+    pub fn http2_keep_alive_reuse_timeout(&mut self, timeout: Option<Duration>) -> &mut Self {
+        self.h2_builder.keep_alive_reuse_timeout(timeout);
         self
     }
 
