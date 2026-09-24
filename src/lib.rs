@@ -66,5 +66,3 @@ pub mod rt;
 pub mod server;
 #[cfg(any(feature = "service", feature = "client-legacy"))]
 pub mod service;
-
-mod error;
