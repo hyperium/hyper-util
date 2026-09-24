@@ -11,40 +11,18 @@ use std::{
 /// Combine a buffer with an IO, rewinding reads to use the buffer.
 #[derive(Debug)]
 pub(crate) struct Rewind<T> {
-    pre: Option<Bytes>,
-    inner: T,
+    pub(crate) pre: Option<Bytes>,
+    pub(crate) inner: T,
 }
 
 impl<T> Rewind<T> {
-    #[cfg(test)]
-    pub(crate) fn new(io: T) -> Self {
-        Rewind {
-            pre: None,
-            inner: io,
-        }
-    }
-
-    #[allow(dead_code)]
+    #[cfg(all(feature = "server", any(feature = "http1", feature = "http2")))]
     pub(crate) fn new_buffered(io: T, buf: Bytes) -> Self {
         Rewind {
             pre: Some(buf),
             inner: io,
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn rewind(&mut self, bs: Bytes) {
-        debug_assert!(self.pre.is_none());
-        self.pre = Some(bs);
-    }
-
-    // pub(crate) fn into_inner(self) -> (T, Bytes) {
-    //     (self.inner, self.pre.unwrap_or_else(Bytes::new))
-    // }
-
-    // pub(crate) fn get_mut(&mut self) -> &mut T {
-    //     &mut self.inner
-    // }
 }
 
 impl<T> Read for Rewind<T>
@@ -59,9 +37,8 @@ where
         if let Some(mut prefix) = self.pre.take() {
             // If there are no remaining bytes, let the bytes get dropped.
             if !prefix.is_empty() {
-                let copy_len = cmp::min(prefix.len(), remaining(&mut buf));
-                // TODO: There should be a way to do following two lines cleaner...
-                put_slice(&mut buf, &prefix[..copy_len]);
+                let copy_len = cmp::min(prefix.len(), buf.remaining());
+                buf.put_slice(&prefix[..copy_len]);
                 prefix.advance(copy_len);
                 // Put back what's left
                 if !prefix.is_empty() {
@@ -72,33 +49,6 @@ where
             }
         }
         Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-fn remaining(cursor: &mut ReadBufCursor<'_>) -> usize {
-    // SAFETY:
-    // We do not uninitialize any set bytes.
-    unsafe { cursor.as_mut().len() }
-}
-
-// Copied from `ReadBufCursor::put_slice`.
-// If that becomes public, we could ditch this.
-fn put_slice(cursor: &mut ReadBufCursor<'_>, slice: &[u8]) {
-    assert!(
-        remaining(cursor) >= slice.len(),
-        "buf.len() must fit in remaining()"
-    );
-
-    let amt = slice.len();
-
-    // SAFETY:
-    // the length is asserted above
-    unsafe {
-        cursor.as_mut()[..amt]
-            .as_mut_ptr()
-            .cast::<u8>()
-            .copy_from_nonoverlapping(slice.as_ptr(), amt);
-        cursor.advance(amt);
     }
 }
 

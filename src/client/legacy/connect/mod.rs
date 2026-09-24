@@ -26,10 +26,10 @@
 //! Or, fully written out:
 //!
 //! ```
-//! use std::{future::Future, net::SocketAddr, pin::Pin, task::{self, Poll}};
+//! use std::{net::SocketAddr, pin::Pin, task::{self, Poll}};
 //! use http::Uri;
 //! use tokio::net::TcpStream;
-//! use tower::Service;
+//! use tower_service::Service;
 //!
 //! #[derive(Clone)]
 //! struct LocalConnector;
@@ -57,12 +57,18 @@
 //! better starting place to extend from.
 //!
 //! [`HttpConnector`]: HttpConnector
-//! [`Service`]: tower::Service
+//! [`Service`]: tower_service::Service
 //! [`Uri`]: ::http::Uri
 //! [`Read`]: hyper::rt::Read
 //! [`Write`]: hyper::rt::Write
 //! [`Connection`]: Connection
-use std::fmt;
+use std::{
+    fmt::{self, Formatter},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use ::http::Extensions;
 
@@ -74,8 +80,10 @@ pub mod dns;
 #[cfg(feature = "tokio")]
 mod http;
 
+pub mod proxy;
+
 pub(crate) mod capture;
-pub use capture::{capture_connection, CaptureConnection};
+pub use capture::{CaptureConnection, capture_connection};
 
 pub use self::sealed::Connect;
 
@@ -94,6 +102,39 @@ pub struct Connected {
     pub(super) alpn: Alpn,
     pub(super) is_proxied: bool,
     pub(super) extra: Option<Extra>,
+    pub(super) poisoned: PoisonPill,
+}
+
+#[derive(Clone)]
+pub(crate) struct PoisonPill {
+    poisoned: Arc<AtomicBool>,
+}
+
+impl fmt::Debug for PoisonPill {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // print the address of the pill—this makes debugging issues much easier
+        write!(
+            f,
+            "PoisonPill@{:p} {{ poisoned: {} }}",
+            self.poisoned,
+            self.poisoned.load(Ordering::Relaxed)
+        )
+    }
+}
+
+impl PoisonPill {
+    pub(crate) fn healthy() -> Self {
+        Self {
+            poisoned: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub(crate) fn poison(&self) {
+        self.poisoned.store(true, Ordering::Relaxed)
+    }
+
+    pub(crate) fn poisoned(&self) -> bool {
+        self.poisoned.load(Ordering::Relaxed)
+    }
 }
 
 pub(super) struct Extra(Box<dyn ExtraInner>);
@@ -111,6 +152,7 @@ impl Connected {
             alpn: Alpn::None,
             is_proxied: false,
             extra: None,
+            poisoned: PoisonPill::healthy(),
         }
     }
 
@@ -170,6 +212,16 @@ impl Connected {
         self.alpn == Alpn::H2
     }
 
+    /// Poison this connection
+    ///
+    /// A poisoned connection will not be reused for subsequent requests by the pool
+    pub fn poison(&self) {
+        self.poisoned.poison();
+        tracing::debug!(
+            poison_pill = ?self.poisoned, "connection was poisoned. this connection will not be reused for subsequent requests"
+        );
+    }
+
     // Don't public expose that `Connected` is `Clone`, unsure if we want to
     // keep that contract...
     pub(super) fn clone(&self) -> Connected {
@@ -177,6 +229,7 @@ impl Connected {
             alpn: self.alpn,
             is_proxied: self.is_proxied,
             extra: self.extra.clone(),
+            poisoned: self.poisoned.clone(),
         }
     }
 }
@@ -249,7 +302,6 @@ where
 
 pub(super) mod sealed {
     use std::error::Error as StdError;
-    use std::future::Future;
 
     use ::http::Uri;
     use hyper::rt::{Read, Write};
@@ -292,8 +344,8 @@ pub(super) mod sealed {
     {
         type _Svc = S;
 
-        fn connect(self, _: Internal, dst: Uri) -> tower::util::Oneshot<S, Uri> {
-            tower::util::Oneshot::new(self, dst)
+        fn connect(self, _: Internal, dst: Uri) -> crate::service::Oneshot<S, Uri> {
+            crate::service::Oneshot::new(self, dst)
         }
     }
 
@@ -306,10 +358,10 @@ pub(super) mod sealed {
     {
         type Connection = T;
         type Error = S::Error;
-        type Future = tower::util::Oneshot<S, Uri>;
+        type Future = crate::service::Oneshot<S, Uri>;
 
         fn connect(self, _: Internal, dst: Uri) -> Self::Future {
-            tower::util::Oneshot::new(self, dst)
+            crate::service::Oneshot::new(self, dst)
         }
     }
 
