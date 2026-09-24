@@ -21,6 +21,48 @@ use tracing::instrument::Instrument;
 #[derive(Default, Debug, Clone)]
 pub struct TokioExecutor {}
 
+/// Future executor that utilises local `tokio` threads.
+///
+/// This executor relies on [`tokio::task::spawn_local()`] to execute futures.
+/// This is of use when dealing with a server or client implementation that is
+/// `!Send`, i.e. it must be run on the same thread.
+///
+/// *Note:* This cannot be used within a task spawned with [`tokio::spawn()`].
+///
+/// # Examples
+///
+/// Execute tasks within a [`LocalSet`][tokio::task::LocalSet].
+///
+/// ```
+/// use hyper_util::rt::tokio::LocalExecutor;
+///
+/// let runtime = tokio::runtime::Builder::new_current_thread()
+///     .build()
+///     .unwrap();
+/// let local_set = tokio::task::LocalSet::new();
+/// local_set.block_on(&runtime, async move {
+///     let executor = LocalExecutor::new();
+///
+///     // Use the executor...
+/// });
+/// ```
+///
+/// Execute tasks within a [`LocalRuntime`][tokio::runtime::LocalRuntime].
+///
+/// ```
+/// use hyper_util::rt::tokio::LocalExecutor;
+///
+/// let runtime = tokio::runtime::LocalRuntime::new().unwrap();
+/// runtime.block_on(async move {
+///     let executor = LocalExecutor::new();
+///
+///     // Use the executor...
+/// });
+/// ```
+#[non_exhaustive]
+#[derive(Default, Debug, Clone)]
+pub struct LocalExecutor {}
+
 // ===== impl TokioExecutor =====
 
 impl<Fut> Executor<Fut> for TokioExecutor
@@ -44,9 +86,28 @@ impl TokioExecutor {
     }
 }
 
+// ===== impl LocalExecutor =====
+
+impl LocalExecutor {
+    /// Create a new executor that relies on [`tokio::task::spawn_local()`] to execute futures.
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl<Fut> Executor<Fut> for LocalExecutor
+where
+    Fut: Future + 'static,
+    Fut::Output: 'static,
+{
+    fn execute(&self, fut: Fut) {
+        tokio::task::spawn_local(fut);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::rt::TokioExecutor;
+    use crate::rt::{TokioExecutor, tokio::executor::LocalExecutor};
     use hyper::rt::Executor;
     use tokio::sync::oneshot;
 
@@ -83,5 +144,80 @@ mod tests {
         } else {
             assert_eq!(spawned_span, None);
         }
+    }
+
+    #[test]
+    fn local_executor_works_with_local_set() {
+        // A future that will spawn a background task that increments a
+        // (single-threaded) reference-counted integer, indicating via a
+        // oneshot channel when that has been done.
+        //
+        // This is a `!Send` future, because it uses `Rc<T>`.
+        let fut = async {
+            use std::{rc::Rc, sync::Mutex};
+            let here = Rc::new(Mutex::new(0));
+            let (tx, rx) = oneshot::channel();
+
+            // Spawn the background task on the local set.
+            let executor = LocalExecutor::new();
+            let there = here.clone();
+            let fut = async move {
+                // *there += 42;
+                *there.lock().unwrap() = 42;
+                tx.send(()).unwrap();
+            };
+
+            executor.execute(fut);
+
+            rx.await.unwrap();
+            assert_eq!(*here.lock().unwrap(), 42);
+        };
+
+        // NOTE: We can't assert negative bounds but this can be uncommented
+        // to check that `fut` above is a `!Send` future.
+        // fn assert_sync<T: Send>(_: &T) {}
+        // assert_sync(&fut);
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let local_set = tokio::task::LocalSet::new();
+        local_set.block_on(&runtime, fut);
+    }
+
+    #[test]
+    fn local_executor_works_with_local_runtime() {
+        // A future that will spawn a background task that increments a
+        // (single-threaded) reference-counted integer, indicating via a
+        // oneshot channel when that has been done.
+        //
+        // This is a `!Send` future, because it uses `Rc<T>`.
+        let fut = async {
+            use std::{rc::Rc, sync::Mutex};
+            let here = Rc::new(Mutex::new(0));
+            let (tx, rx) = oneshot::channel();
+
+            // Spawn the background task on the local set.
+            let executor = LocalExecutor::new();
+            let there = here.clone();
+            let fut = async move {
+                // *there += 42;
+                *there.lock().unwrap() = 42;
+                tx.send(()).unwrap();
+            };
+
+            executor.execute(fut);
+
+            rx.await.unwrap();
+            assert_eq!(*here.lock().unwrap(), 42);
+        };
+
+        // NOTE: We can't assert negative bounds but this can be uncommented
+        // to check that `fut` above is a `!Send` future.
+        // fn assert_sync<T: Send>(_: &T) {}
+        // assert_sync(&fut);
+
+        let runtime = tokio::runtime::LocalRuntime::new().unwrap();
+        runtime.block_on(fut);
     }
 }

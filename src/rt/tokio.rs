@@ -60,7 +60,11 @@ use std::{
 use hyper::rt::{Sleep, Timer};
 use pin_project_lite::pin_project;
 
-pub use self::{executor::TokioExecutor, with_hyper_io::WithHyperIo, with_tokio_io::WithTokioIo};
+pub use self::{
+    executor::{LocalExecutor, TokioExecutor},
+    with_hyper_io::WithHyperIo,
+    with_tokio_io::WithTokioIo,
+};
 
 mod executor;
 mod with_hyper_io;
