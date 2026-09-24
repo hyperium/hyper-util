@@ -34,14 +34,14 @@ pub struct TokioExecutor {}
 /// Execute tasks within a [`LocalSet`][tokio::task::LocalSet].
 ///
 /// ```
-/// use hyper_util::rt::tokio::LocalExecutor;
+/// use hyper_util::rt::tokio::TokioLocalExecutor;
 ///
 /// let runtime = tokio::runtime::Builder::new_current_thread()
 ///     .build()
 ///     .unwrap();
 /// let local_set = tokio::task::LocalSet::new();
 /// local_set.block_on(&runtime, async move {
-///     let executor = LocalExecutor::new();
+///     let executor = TokioLocalExecutor::new();
 ///
 ///     // Use the executor...
 /// });
@@ -50,18 +50,18 @@ pub struct TokioExecutor {}
 /// Execute tasks within a [`LocalRuntime`][tokio::runtime::LocalRuntime].
 ///
 /// ```
-/// use hyper_util::rt::tokio::LocalExecutor;
+/// use hyper_util::rt::tokio::TokioLocalExecutor;
 ///
 /// let runtime = tokio::runtime::LocalRuntime::new().unwrap();
 /// runtime.block_on(async move {
-///     let executor = LocalExecutor::new();
+///     let executor = TokioLocalExecutor::new();
 ///
 ///     // Use the executor...
 /// });
 /// ```
 #[non_exhaustive]
 #[derive(Default, Debug, Clone)]
-pub struct LocalExecutor {}
+pub struct TokioLocalExecutor {}
 
 // ===== impl TokioExecutor =====
 
@@ -86,16 +86,16 @@ impl TokioExecutor {
     }
 }
 
-// ===== impl LocalExecutor =====
+// ===== impl TokioLocalExecutor =====
 
-impl LocalExecutor {
+impl TokioLocalExecutor {
     /// Create a new executor that relies on [`tokio::task::spawn_local()`] to execute futures.
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl<Fut> Executor<Fut> for LocalExecutor
+impl<Fut> Executor<Fut> for TokioLocalExecutor
 where
     Fut: Future + 'static,
     Fut::Output: 'static,
@@ -107,7 +107,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::rt::{TokioExecutor, tokio::executor::LocalExecutor};
+    use crate::rt::{TokioExecutor, tokio::executor::TokioLocalExecutor};
     use hyper::rt::Executor;
     use tokio::sync::oneshot;
 
@@ -159,7 +159,7 @@ mod tests {
             let (tx, rx) = oneshot::channel();
 
             // Spawn the background task on the local set.
-            let executor = LocalExecutor::new();
+            let executor = TokioLocalExecutor::new();
             let there = here.clone();
             let fut = async move {
                 // *there += 42;
@@ -198,7 +198,7 @@ mod tests {
             let (tx, rx) = oneshot::channel();
 
             // Spawn the background task on the local set.
-            let executor = LocalExecutor::new();
+            let executor = TokioLocalExecutor::new();
             let there = here.clone();
             let fut = async move {
                 // *there += 42;
