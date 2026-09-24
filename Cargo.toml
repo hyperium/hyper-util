@@ -112,3 +112,7 @@ required-features = ["server", "http1", "tokio"]
 [[example]]
 name = "server_graceful"
 required-features = ["tokio", "server-graceful", "server-auto"]
+
+[[example]]
+name = "expect_continue"
+required-features = ["client", "server", "http1", "tokio"]
