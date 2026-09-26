@@ -45,11 +45,11 @@ pub struct Intercept {
 /// Construct with [`Matcher::builder()`].
 #[derive(Default)]
 pub struct Builder {
-    is_cgi: bool,
-    all: String,
-    http: String,
-    https: String,
-    no: String,
+    pub(super) is_cgi: bool,
+    pub(super) all: String,
+    pub(super) http: String,
+    pub(super) https: String,
+    pub(super) no: String,
 }
 
 #[derive(Clone)]
@@ -240,10 +240,10 @@ impl Builder {
         let mut builder = Self::from_env();
 
         #[cfg(all(feature = "client-proxy-system", target_os = "macos"))]
-        mac::with_system(&mut builder);
+        super::mac::with_system(&mut builder);
 
         #[cfg(all(feature = "client-proxy-system", windows))]
-        win::with_system(&mut builder);
+        super::win::with_system(&mut builder);
 
         builder
     }
@@ -567,164 +567,10 @@ mod builder {
     }
 }
 
-#[cfg(feature = "client-proxy-system")]
-#[cfg(target_os = "macos")]
-mod mac {
-    use system_configuration::core_foundation::base::CFType;
-    use system_configuration::core_foundation::dictionary::CFDictionary;
-    use system_configuration::core_foundation::number::CFNumber;
-    use system_configuration::core_foundation::string::{CFString, CFStringRef};
-    use system_configuration::dynamic_store::SCDynamicStoreBuilder;
-    use system_configuration::sys::schema_definitions::{
-        kSCPropNetProxiesHTTPEnable, kSCPropNetProxiesHTTPPort, kSCPropNetProxiesHTTPProxy,
-        kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy,
-    };
-
-    pub(super) fn with_system(builder: &mut super::Builder) {
-        let store = if let Some(store) = SCDynamicStoreBuilder::new("hyper-util").build() {
-            store
-        } else {
-            return;
-        };
-
-        let proxies_map = if let Some(proxies_map) = store.get_proxies() {
-            proxies_map
-        } else {
-            return;
-        };
-
-        if builder.http.is_empty() {
-            let http_proxy_config = parse_setting_from_dynamic_store(
-                &proxies_map,
-                unsafe { kSCPropNetProxiesHTTPEnable },
-                unsafe { kSCPropNetProxiesHTTPProxy },
-                unsafe { kSCPropNetProxiesHTTPPort },
-            );
-            if let Some(http) = http_proxy_config {
-                builder.http = http;
-            }
-        }
-
-        if builder.https.is_empty() {
-            let https_proxy_config = parse_setting_from_dynamic_store(
-                &proxies_map,
-                unsafe { kSCPropNetProxiesHTTPSEnable },
-                unsafe { kSCPropNetProxiesHTTPSProxy },
-                unsafe { kSCPropNetProxiesHTTPSPort },
-            );
-
-            if let Some(https) = https_proxy_config {
-                builder.https = https;
-            }
-        }
-    }
-
-    fn parse_setting_from_dynamic_store(
-        proxies_map: &CFDictionary<CFString, CFType>,
-        enabled_key: CFStringRef,
-        host_key: CFStringRef,
-        port_key: CFStringRef,
-    ) -> Option<String> {
-        let proxy_enabled = proxies_map
-            .find(enabled_key)
-            .and_then(|flag| flag.downcast::<CFNumber>())
-            .and_then(|flag| flag.to_i32())
-            .unwrap_or(0)
-            == 1;
-
-        if proxy_enabled {
-            let proxy_host = proxies_map
-                .find(host_key)
-                .and_then(|host| host.downcast::<CFString>())
-                .map(|host| host.to_string());
-            let proxy_port = proxies_map
-                .find(port_key)
-                .and_then(|port| port.downcast::<CFNumber>())
-                .and_then(|port| port.to_i32());
-
-            return match (proxy_host, proxy_port) {
-                (Some(proxy_host), Some(proxy_port)) => Some(format!("{proxy_host}:{proxy_port}")),
-                (Some(proxy_host), None) => Some(proxy_host),
-                (None, Some(_)) => None,
-                (None, None) => None,
-            };
-        }
-
-        None
-    }
-}
-
-#[cfg(feature = "client-proxy-system")]
-#[cfg(windows)]
-mod win {
-    fn ipv4_wildcard_to_cidr(value: &str) -> Option<String> {
-        let parts = value.split('.').collect::<Vec<_>>();
-        let wildcard = parts.iter().position(|part| *part == "*")?;
-
-        if wildcard == 0 || wildcard > 3 || parts[wildcard..].iter().any(|part| *part != "*") {
-            return None;
-        }
-
-        let mut octets = [0; 4];
-        for (index, part) in parts[..wildcard].iter().enumerate() {
-            octets[index] = part.parse().ok()?;
-        }
-
-        Some(format!(
-            "{}.{}.{}.{}/{}",
-            octets[0],
-            octets[1],
-            octets[2],
-            octets[3],
-            wildcard * 8
-        ))
-    }
-
-    pub(super) fn normalize_proxy_override(value: &str) -> String {
-        value
-            .split(';')
-            .map(|entry| {
-                let entry = entry.trim();
-                ipv4_wildcard_to_cidr(entry).unwrap_or_else(|| entry.to_string())
-            })
-            .collect::<Vec<_>>()
-            .join(",")
-            .replace("*.", "")
-    }
-
-    pub(super) fn with_system(builder: &mut super::Builder) {
-        let settings = if let Ok(settings) = windows_registry::CURRENT_USER
-            .open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
-        {
-            settings
-        } else {
-            return;
-        };
-
-        if settings.get_u32("ProxyEnable").unwrap_or(0) == 0 {
-            return;
-        }
-
-        if let Ok(val) = settings.get_string("ProxyServer") {
-            if builder.http.is_empty() {
-                builder.http = val.clone();
-            }
-            if builder.https.is_empty() {
-                builder.https = val;
-            }
-        }
-
-        if builder.no.is_empty() {
-            if let Ok(val) = settings.get_string("ProxyOverride") {
-                builder.no = normalize_proxy_override(&val);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::proxy::win;
 
     #[test]
     fn test_domain_matcher() {
@@ -949,31 +795,25 @@ mod tests {
         };
 
         // should bypass proxy (case insensitive match)
-        assert!(
-            p.intercept(&"http://example.com".parse().unwrap())
-                .is_none()
-        );
-        assert!(
-            p.intercept(&"http://EXAMPLE.COM".parse().unwrap())
-                .is_none()
-        );
-        assert!(
-            p.intercept(&"http://Example.com".parse().unwrap())
-                .is_none()
-        );
+        assert!(p
+            .intercept(&"http://example.com".parse().unwrap())
+            .is_none());
+        assert!(p
+            .intercept(&"http://EXAMPLE.COM".parse().unwrap())
+            .is_none());
+        assert!(p
+            .intercept(&"http://Example.com".parse().unwrap())
+            .is_none());
 
         // subdomain should bypass proxy (case insensitive match)
-        assert!(
-            p.intercept(&"http://www.example.com".parse().unwrap())
-                .is_none()
-        );
-        assert!(
-            p.intercept(&"http://WWW.EXAMPLE.COM".parse().unwrap())
-                .is_none()
-        );
-        assert!(
-            p.intercept(&"http://Www.Example.Com".parse().unwrap())
-                .is_none()
-        );
+        assert!(p
+            .intercept(&"http://www.example.com".parse().unwrap())
+            .is_none());
+        assert!(p
+            .intercept(&"http://WWW.EXAMPLE.COM".parse().unwrap())
+            .is_none());
+        assert!(p
+            .intercept(&"http://Www.Example.Com".parse().unwrap())
+            .is_none());
     }
 }
