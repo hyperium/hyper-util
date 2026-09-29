@@ -79,6 +79,8 @@ jobs:
     # Only run on PR close/merge
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout gh-pages branch
         uses: actions/checkout@v7
@@ -93,7 +95,7 @@ jobs:
       - name: Commit and push removal
         run: |
           git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .
           git commit -m "Remove rustdoc preview for PR #${{ github.event.pull_request.number }}" || echo "Nothing to commit"
           git push
