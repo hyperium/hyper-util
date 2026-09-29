@@ -79,6 +79,8 @@ jobs:
     # Only run on PR close/merge
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout gh-pages branch
         uses: actions/checkout@v7
