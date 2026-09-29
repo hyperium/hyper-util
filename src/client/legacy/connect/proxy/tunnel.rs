@@ -21,7 +21,7 @@ pub struct Tunnel<C> {
 }
 
 #[derive(Clone, Debug)]
-enum Headers {
+pub(super) enum Headers {
     Empty,
     Auth(HeaderValue),
     Extra(HeaderMap),

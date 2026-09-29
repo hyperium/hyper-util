@@ -701,3 +701,123 @@ async fn test_socks_v4_with_ipv6_target_fails() {
     t1.await.expect("task - client");
     t2.await.expect("task - proxy");
 }
+
+#[cfg(all(not(miri), feature = "http1"))]
+#[tokio::test]
+async fn test_http_connect_works() {
+    use hyper_util::client::legacy::connect::proxy::HttpConnect;
+
+    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = tcp.local_addr().expect("local_addr");
+
+    let proxy_dst = format!("http://{addr}").parse().expect("uri");
+    let mut connector = HttpConnect::new(proxy_dst, HttpConnector::new());
+
+    // Client
+    //
+    // Will use `HttpConnect` to establish a proxy tunnel.
+    let t1 = tokio::spawn(async move {
+        let _conn = connector
+            .call("https://hyper.rs".parse().unwrap())
+            .await
+            .expect("tunnel");
+    });
+
+    // Proxy
+    //
+    // Will receive the CONNECT request and reply with 200.
+    let t2 = tokio::spawn(async move {
+        let (mut io, _) = tcp.accept().await.expect("accept");
+
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            let mut byte = [0u8; 1];
+            io.read_exact(&mut byte).await.expect("read 1");
+            head.push(byte[0]);
+        }
+        let head = String::from_utf8(head).expect("utf8");
+        assert!(
+            head.starts_with("CONNECT hyper.rs:443 HTTP/1.1\r\n"),
+            "unexpected request line: {head:?}"
+        );
+        assert!(
+            head.to_lowercase().contains("host: hyper.rs:443\r\n"),
+            "missing host header: {head:?}"
+        );
+
+        io.write_all(b"HTTP/1.1 200 OK\r\n\r\n")
+            .await
+            .expect("write 1");
+    });
+
+    t1.await.expect("task - client");
+    t2.await.expect("task - proxy");
+}
+
+#[cfg(all(not(miri), feature = "http1"))]
+#[tokio::test]
+async fn test_http_connect_preserves_early_data() {
+    use hyper_util::client::legacy::connect::proxy::HttpConnect;
+    use hyper_util::rt::TokioIo;
+
+    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = tcp.local_addr().expect("local_addr");
+
+    let proxy_dst = format!("http://{addr}").parse().expect("uri");
+    let mut connector = HttpConnect::new(proxy_dst, HttpConnector::new());
+
+    // Client
+    //
+    // The destination speaks first: its bytes must arrive through the tunnel
+    // even though they were received together with the proxy's response.
+    let t1 = tokio::spawn(async move {
+        let conn = connector
+            .call("https://hyper.rs".parse().unwrap())
+            .await
+            .expect("tunnel");
+        let mut tcp = TokioIo::new(conn);
+
+        let mut received = Vec::new();
+        let mut buf = [0u8; 64];
+        while received.len() < b"server speaks first".len() {
+            let n = tcp.read(&mut buf).await.expect("read 1");
+            assert_ne!(n, 0, "eof before all early data was received");
+            received.extend_from_slice(&buf[..n]);
+        }
+        assert_eq!(received, b"server speaks first");
+
+        tcp.write_all(b"Hello World!").await.expect("write 1");
+
+        let n = tcp.read(&mut buf).await.expect("read 2");
+        assert_eq!(&buf[..n], b"Goodbye!");
+    });
+
+    // Proxy
+    //
+    // Will reply with 200 and the destination's first bytes in a single
+    // write, then tunnel blindly.
+    let t2 = tokio::spawn(async move {
+        let (mut io, _) = tcp.accept().await.expect("accept");
+
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            let mut byte = [0u8; 1];
+            io.read_exact(&mut byte).await.expect("read 1");
+            head.push(byte[0]);
+        }
+
+        io.write_all(b"HTTP/1.1 200 OK\r\n\r\nserver speaks")
+            .await
+            .expect("write 1");
+        io.write_all(b" first").await.expect("write 2");
+
+        let mut buf = [0u8; 64];
+        let n = io.read(&mut buf).await.expect("read 2");
+        assert_eq!(&buf[..n], b"Hello World!");
+
+        io.write_all(b"Goodbye!").await.expect("write 3");
+    });
+
+    t1.await.expect("task - client");
+    t2.await.expect("task - proxy");
+}
