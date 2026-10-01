@@ -4,7 +4,6 @@ pub(crate) mod exec;
 #[cfg(feature = "client-legacy")]
 mod lazy;
 #[cfg(feature = "server")]
-// #[cfg(feature = "server-auto")]
 pub(crate) mod rewind;
 pub(crate) mod timer;
 
