@@ -25,9 +25,10 @@ use super::connect::HttpConnector;
 use super::connect::capture::CaptureConnectionExtension;
 use super::connect::{Alpn, Connect, Connected, Connection};
 use super::exec::Exec;
+use super::lazy::{Started as Lazy, lazy as hyper_lazy};
 use super::pool::{self, Ver};
 
-use crate::common::{Lazy, lazy as hyper_lazy, timer};
+use crate::common::timer;
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
