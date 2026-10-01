@@ -15,6 +15,13 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::connect::{Connected, Connection};
 use hyper_util::rt::TokioIo;
 
+pub fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("new rt")
+}
+
 #[derive(Clone)]
 pub struct DebugConnector {
     pub http: HttpConnector,
@@ -41,6 +48,8 @@ impl DebugConnector {
         }
     }
 
+    #[cfg(any(feature = "http1", feature = "client-proxy"))]
+    #[cfg_attr(feature = "http2", allow(dead_code))]
     pub fn proxy(mut self) -> Self {
         self.is_proxy = true;
         self
