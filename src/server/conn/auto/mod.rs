@@ -1133,7 +1133,7 @@ impl<E> Http2Builder<'_, E> {
     }
 }
 
-#[cfg(all(feature = "tokio", test))]
+#[cfg(all(feature = "tokio", feature = "http1", feature = "http2", test))]
 mod tests {
     use crate::{
         rt::{TokioExecutor, TokioIo},
