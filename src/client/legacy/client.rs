@@ -24,9 +24,10 @@ use tracing::{debug, trace, warn};
 use super::connect::HttpConnector;
 use super::connect::capture::CaptureConnectionExtension;
 use super::connect::{Alpn, Connect, Connected, Connection};
+use super::exec::Exec;
 use super::pool::{self, Ver};
 
-use crate::common::{Exec, Lazy, lazy as hyper_lazy, timer};
+use crate::common::{Lazy, lazy as hyper_lazy, timer};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 

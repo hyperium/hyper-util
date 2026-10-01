@@ -17,7 +17,8 @@ use tracing::{debug, trace};
 
 use hyper::rt::Timer as _;
 
-use crate::common::{exec, exec::Exec, timer::Timer};
+use super::exec::{self, Exec};
+use crate::common::timer::Timer;
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
