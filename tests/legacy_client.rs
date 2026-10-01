@@ -3,7 +3,7 @@
 mod test_utils;
 
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::net::TcpListener;
 use std::pin::{Pin, pin};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -16,7 +16,7 @@ use futures_util::future::{self, FutureExt, TryFutureExt};
 use futures_util::stream::StreamExt;
 use futures_util::{self, Stream};
 use http_body_util::BodyExt;
-use http_body_util::{Empty, Full, StreamBody};
+use http_body_util::{Empty, StreamBody};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use hyper::Request;
@@ -24,7 +24,7 @@ use hyper::body::Bytes;
 use hyper::body::Frame;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::{HttpConnector, capture_connection};
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::TokioExecutor;
 
 use test_utils::{DebugConnector, DebugStream};
 
@@ -820,7 +820,10 @@ fn client_http2_upgrade() {
     let _ = pretty_env_logger::try_init();
     let rt = runtime();
     let server = rt
-        .block_on(TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))))
+        .block_on(TcpListener::bind(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            0,
+        ))))
         .unwrap();
     let addr = server.local_addr().unwrap();
     let mut connector = DebugConnector::new();
@@ -883,7 +886,7 @@ fn client_http2_upgrade() {
     assert_eq!(res.version(), Version::HTTP_2);
 
     let upgraded = rt.block_on(hyper::upgrade::on(res)).expect("on_upgrade");
-    let mut io = TokioIo::new(upgraded);
+    let mut io = hyper_util::rt::TokioIo::new(upgraded);
 
     rt.block_on(io.write_all(b"foo=bar")).unwrap();
     let mut vec = vec![];
@@ -896,13 +899,17 @@ fn client_http2_upgrade() {
 #[test]
 fn alpn_h2() {
     use http::Response;
+    use http_body_util::Full;
     use hyper::service::service_fn;
     use tokio::net::TcpListener;
 
     let _ = pretty_env_logger::try_init();
     let rt = runtime();
     let listener = rt
-        .block_on(TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))))
+        .block_on(TcpListener::bind(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            0,
+        ))))
         .unwrap();
     let addr = listener.local_addr().unwrap();
     let mut connector = DebugConnector::new();
@@ -913,7 +920,7 @@ fn alpn_h2() {
 
     rt.spawn(async move {
         let (stream, _) = listener.accept().await.expect("accept");
-        let stream = TokioIo::new(stream);
+        let stream = hyper_util::rt::TokioIo::new(stream);
         hyper::server::conn::http2::Builder::new(TokioExecutor::new())
             .serve_connection(
                 stream,
