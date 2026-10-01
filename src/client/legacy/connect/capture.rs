@@ -121,7 +121,7 @@ impl CaptureConnection {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "http1", feature = "http2")))]
 mod test {
     use super::*;
 
