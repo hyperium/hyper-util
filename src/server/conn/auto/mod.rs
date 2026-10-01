@@ -1,5 +1,6 @@
 //! Http1 or Http2 connection.
 
+mod rewind;
 pub mod upgrade;
 
 use hyper::service::HttpService;
@@ -29,7 +30,7 @@ use std::marker::PhantomData;
 
 use pin_project_lite::pin_project;
 
-use crate::common::rewind::Rewind;
+use self::rewind::Rewind;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 

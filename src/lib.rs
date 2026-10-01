@@ -60,7 +60,6 @@
 
 #[cfg(feature = "client")]
 pub mod client;
-mod common;
 pub mod rt;
 #[cfg(feature = "server")]
 pub mod server;
