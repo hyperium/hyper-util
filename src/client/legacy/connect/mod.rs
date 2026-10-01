@@ -132,6 +132,7 @@ impl PoisonPill {
         self.poisoned.store(true, Ordering::Relaxed)
     }
 
+    #[cfg(any(feature = "http1", feature = "http2"))]
     pub(crate) fn poisoned(&self) -> bool {
         self.poisoned.load(Ordering::Relaxed)
     }
@@ -224,6 +225,7 @@ impl Connected {
 
     // Don't public expose that `Connected` is `Clone`, unsure if we want to
     // keep that contract...
+    #[cfg(any(feature = "http1", feature = "http2"))]
     pub(super) fn clone(&self) -> Connected {
         Connected {
             alpn: self.alpn,
