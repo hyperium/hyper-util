@@ -17,7 +17,8 @@ jobs:
       - test
       - msrv
       - miri
-      - features
+      - client-features
+      - server-features
       - semver
       - doc
     steps:
@@ -94,15 +95,27 @@ jobs:
           MIRIFLAGS: "-Zmiri-disable-isolation"
         run: cargo miri test --all-features
 
-  features:
-    name: features
+  client-features:
+    name: client-features
     needs: [style]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
-      - run: cargo hack --no-dev-deps check --feature-powerset --depth 2
+      - uses: taiki-e/install-action@just
+      - run: just check-client-features
+
+  server-features:
+    name: server-features
+    needs: [style]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+      - uses: taiki-e/install-action@just
+      - run: just check-server-features
 
   semver:
     name: semver
