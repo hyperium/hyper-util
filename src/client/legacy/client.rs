@@ -27,8 +27,7 @@ use super::connect::{Alpn, Connect, Connected, Connection};
 use super::exec::Exec;
 use super::lazy::{Started as Lazy, lazy as hyper_lazy};
 use super::pool::{self, Ver};
-
-use crate::common::timer;
+use super::timer;
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 

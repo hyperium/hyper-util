@@ -6,6 +6,7 @@ pub use client::{Builder, Client, Error, ResponseFuture};
 mod lazy;
 
 mod exec;
+mod timer;
 
 pub mod connect;
 #[doc(hidden)]
