@@ -847,9 +847,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
+    use crate::client::legacy::timer;
     use crate::rt::{TokioExecutor, TokioTimer};
-
-    use crate::common::timer;
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
     struct KeyImpl(http::uri::Scheme, http::uri::Authority);
