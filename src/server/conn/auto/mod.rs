@@ -1135,20 +1135,25 @@ impl<E> Http2Builder<'_, E> {
 
 #[cfg(all(feature = "tokio", feature = "http1", feature = "http2", test))]
 mod tests {
-    use crate::{
-        rt::{TokioExecutor, TokioIo},
-        server::conn::auto,
-    };
-    use http::{Request, Response};
-    use http_body::Body;
-    use http_body_util::{BodyExt, Empty, Full};
-    use hyper::{body, body::Bytes, client, service::service_fn};
-    use std::{convert::Infallible, error::Error as StdError, net::SocketAddr, time::Duration};
-    use tokio::{
-        net::{TcpListener, TcpStream},
-        pin,
-    };
+    use crate::{rt::TokioExecutor, server::conn::auto};
 
+    #[cfg(not(miri))]
+    use prelude::*;
+    #[cfg(not(miri))]
+    mod prelude {
+        pub use crate::rt::TokioIo;
+        pub use http::{Request, Response};
+        pub use http_body::Body;
+        pub use http_body_util::{BodyExt, Empty, Full};
+        pub use hyper::client;
+        pub use hyper::{body, body::Bytes, service::service_fn};
+        pub use std::{convert::Infallible, time::Duration};
+        pub use std::{error::Error as StdError, net::SocketAddr};
+        pub use tokio::net::TcpListener;
+        pub use tokio::net::TcpStream;
+    }
+
+    #[cfg(not(miri))]
     const BODY: &[u8] = b"Hello, world!";
 
     #[test]
@@ -1300,7 +1305,7 @@ mod tests {
         let builder = auto::Builder::new(TokioExecutor::new());
         let connection = builder.serve_connection(stream, service_fn(hello));
 
-        pin!(connection);
+        tokio::pin!(connection);
 
         connection.as_mut().graceful_shutdown();
 
@@ -1315,6 +1320,7 @@ mod tests {
         assert_eq!(connection_error.kind(), std::io::ErrorKind::Interrupted);
     }
 
+    #[cfg(not(miri))]
     async fn connect_h1<B>(addr: SocketAddr) -> client::conn::http1::SendRequest<B>
     where
         B: Body + Send + 'static,
@@ -1329,6 +1335,7 @@ mod tests {
         sender
     }
 
+    #[cfg(not(miri))]
     async fn connect_h2<B>(addr: SocketAddr) -> client::conn::http2::SendRequest<B>
     where
         B: Body + Unpin + Send + 'static,
@@ -1346,6 +1353,7 @@ mod tests {
         sender
     }
 
+    #[cfg(not(miri))]
     async fn start_server(h1_only: bool, h2_only: bool) -> SocketAddr {
         let addr: SocketAddr = ([127, 0, 0, 1], 0).into();
         let listener = TcpListener::bind(addr).await.unwrap();
@@ -1379,6 +1387,7 @@ mod tests {
         local_addr
     }
 
+    #[cfg(not(miri))]
     async fn hello(_req: Request<body::Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
         Ok(Response::new(Full::new(Bytes::from(BODY))))
     }
