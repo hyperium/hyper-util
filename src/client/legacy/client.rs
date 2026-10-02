@@ -17,6 +17,7 @@ use hyper::client::conn::TrySendError as ConnTrySendError;
 use hyper::header::{HOST, HeaderValue};
 use hyper::rt::Timer;
 use hyper::{Method, Request, Response, Uri, Version, body::Body};
+use sync_wrapper::SyncWrapper;
 use tracing::{debug, trace, warn};
 
 #[cfg(feature = "tokio")]
@@ -25,7 +26,7 @@ use super::connect::capture::CaptureConnectionExtension;
 use super::connect::{Alpn, Connect, Connected, Connection};
 use super::pool::{self, Ver};
 
-use crate::common::{Exec, Lazy, SyncWrapper, lazy as hyper_lazy, timer};
+use crate::common::{Exec, Lazy, lazy as hyper_lazy, timer};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
