@@ -1,4 +1,8 @@
-#![cfg(all(feature = "client-legacy", any(feature = "http1", feature = "http2")))]
+#![cfg(all(
+    feature = "client-legacy",
+    feature = "tcp",
+    any(feature = "http1", feature = "http2")
+))]
 
 mod test_utils;
 

@@ -72,12 +72,14 @@ use std::{
 
 use ::http::Extensions;
 
-#[cfg(feature = "tokio")]
+#[cfg(feature = "tcp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tcp")))]
 pub use self::http::{HttpConnector, HttpInfo};
 
-#[cfg(feature = "tokio")]
+#[cfg(feature = "tcp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tcp")))]
 pub mod dns;
-#[cfg(feature = "tokio")]
+#[cfg(feature = "tcp")]
 mod http;
 
 pub mod proxy;

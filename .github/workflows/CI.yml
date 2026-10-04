@@ -58,6 +58,9 @@ jobs:
       # full excludes that opt-in, so also check that TokioExecutor does not
       # propagate spans by default. Limit this extra run to runtime tests.
       - run: "cargo test --features full --lib rt::"
+      # Test client-legacy without the tcp feature to ensure custom connectors
+      # work on targets where mio/tcp is unsupported.
+      - run: "cargo test --features client-legacy,http1,tokio --test client_no_tcp"
 
   msrv:
     name: Check MSRV (${{ matrix.rust }}) on ${{ matrix.os }}
