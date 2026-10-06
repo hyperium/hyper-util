@@ -1505,7 +1505,7 @@ impl Builder {
     ///
     /// The default value is determined by the `h2` crate.
     ///
-    /// [`h2::client::Builder::max_concurrent_reset_streams`]: https://docs.rs/h2/client/struct.Builder.html#method.max_concurrent_reset_streams
+    /// [`h2::client::Builder::max_concurrent_reset_streams`]: https://docs.rs/h2/latest/h2/client/struct.Builder.html#method.max_concurrent_reset_streams
     #[cfg(feature = "http2")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_max_concurrent_reset_streams(&mut self, max: usize) -> &mut Self {
@@ -1545,10 +1545,10 @@ impl Builder {
 
     /// Provide a timer to be used for h2
     ///
-    /// See the documentation of [`h2::client::Builder::timer`] for more
+    /// See the documentation of [`hyper::client::conn::http2::Builder::timer`] for more
     /// details.
     ///
-    /// [`h2::client::Builder::timer`]: https://docs.rs/h2/client/struct.Builder.html#method.timer
+    /// [`hyper::client::conn::http2::Builder::timer`]: https://docs.rs/hyper/latest/hyper/client/conn/http2/struct.Builder.html#method.timer
     pub fn timer<M>(&mut self, timer: M) -> &mut Self
     where
         M: Timer + Send + Sync + 'static,
