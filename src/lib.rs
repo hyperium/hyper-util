@@ -23,6 +23,8 @@
 //! * `client`: Enable [`client`] interfaces.
 //! * `client-legacy`: Enable the legacy
 //!   [`Client`][crate::client::legacy::Client] implementation.
+//! * `client-legacy-http-connector`: Enable the legacy
+//!   [`HttpConnector`][crate::client::legacy::connect::HttpConnector].
 //! * `client-pool`: Enable [`client::pool`]. This submodule contains
 //!   interfaces for constructing connection pools.
 //! * `client-proxy`: Enable [`client::proxy`].

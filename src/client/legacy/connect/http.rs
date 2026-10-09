@@ -12,7 +12,7 @@ use futures_util::future::Either;
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
 use socket2::TcpKeepalive;
-use tokio::net::{TcpSocket, TcpStream};
+use tokio::net::TcpStream;
 use tokio::time::Sleep;
 use tracing::{debug, trace, warn};
 
@@ -941,7 +941,7 @@ fn connect(
     .map_err(ConnectError::m("tcp bind local error"))?;
 
     // Convert the `Socket` to a Tokio `TcpSocket`.
-    let socket = TcpSocket::from_std_stream(socket.into());
+    let socket = tokio::net::TcpSocket::from_std_stream(socket.into());
 
     if config.reuse_address {
         if let Err(e) = socket.set_reuseaddr(true) {
