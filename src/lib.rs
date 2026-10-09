@@ -1,4 +1,5 @@
 #![deny(missing_docs)]
+#![deny(unused)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! Utilities for working with hyper.
@@ -60,7 +61,6 @@
 
 #[cfg(feature = "client")]
 pub mod client;
-mod common;
 pub mod rt;
 #[cfg(feature = "server")]
 pub mod server;

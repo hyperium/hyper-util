@@ -100,9 +100,6 @@ tracing = ["dep:tracing"]
 # Temporary compatibility opt-in, deliberately excluded from `full`.
 rt-tracing-exec-force = ["tokio", "tracing"]
 
-# internal features used in CI
-__internal_happy_eyeballs_tests = []
-
 [[example]]
 name = "client"
 required-features = ["client-legacy", "http1", "tokio"]

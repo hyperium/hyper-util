@@ -24,9 +24,10 @@ use tracing::{debug, trace, warn};
 use super::connect::HttpConnector;
 use super::connect::capture::CaptureConnectionExtension;
 use super::connect::{Alpn, Connect, Connected, Connection};
+use super::exec::Exec;
+use super::lazy::{Started as Lazy, lazy as hyper_lazy};
 use super::pool::{self, Ver};
-
-use crate::common::{Exec, Lazy, lazy as hyper_lazy, timer};
+use super::timer;
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -64,6 +65,7 @@ pub struct Error {
 #[derive(Debug)]
 enum ErrorKind {
     Canceled,
+    #[cfg(feature = "http1")]
     ChannelClosed,
     Connect,
     UserUnsupportedRequestMethod,
@@ -1549,7 +1551,10 @@ impl Builder {
     /// details.
     ///
     /// [`hyper::client::conn::http2::Builder::timer`]: https://docs.rs/hyper/latest/hyper/client/conn/http2/struct.Builder.html#method.timer
-    pub fn timer<M>(&mut self, timer: M) -> &mut Self
+    pub fn timer<M>(
+        &mut self,
+        #[cfg_attr(not(feature = "http2"), allow(unused_variables))] timer: M,
+    ) -> &mut Self
     where
         M: Timer + Send + Sync + 'static,
     {
@@ -1707,6 +1712,7 @@ impl Error {
         e!(SendRequest, src)
     }
 
+    #[cfg(feature = "http1")]
     fn closed(src: hyper::Error) -> Self {
         e!(ChannelClosed, src)
     }

@@ -1020,7 +1020,6 @@ fn set_port(addr: &mut SocketAddr, host_port: u16, explicit: bool) {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
     use std::net::SocketAddr;
 
     use ::http::Uri;
@@ -1028,7 +1027,7 @@ mod tests {
     use crate::client::legacy::connect::http::TcpKeepaliveConfig;
 
     use super::super::sealed::{Connect, ConnectSvc};
-    use super::{Config, ConnectError, HttpConnector};
+    use super::HttpConnector;
 
     use super::set_port;
 

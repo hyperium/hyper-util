@@ -80,10 +80,12 @@ pub fn capture_connection<B>(request: &mut Request<B>) -> CaptureConnection {
 /// This is inserted into `Extensions` to allow Hyper to back channel connection info
 #[derive(Clone)]
 pub(crate) struct CaptureConnectionExtension {
+    #[cfg_attr(not(any(feature = "http1", feature = "http2")), allow(dead_code))]
     tx: Arc<watch::Sender<Option<Connected>>>,
 }
 
 impl CaptureConnectionExtension {
+    #[cfg(any(feature = "http1", feature = "http2"))]
     pub(crate) fn set(&self, connected: &Connected) {
         self.tx.send_replace(Some(connected.clone()));
     }
@@ -119,7 +121,7 @@ impl CaptureConnection {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "http1", feature = "http2")))]
 mod test {
     use super::*;
 

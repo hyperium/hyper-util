@@ -6,7 +6,7 @@ use hyper::{
     upgrade::Upgraded,
 };
 
-use crate::common::rewind::Rewind;
+use super::rewind::Rewind;
 
 /// Tries to downcast the internal trait object to the type passed.
 ///

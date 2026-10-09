@@ -17,7 +17,8 @@ use tracing::{debug, trace};
 
 use hyper::rt::Timer as _;
 
-use crate::common::{exec, exec::Exec, timer::Timer};
+use super::exec::{self, Exec};
+use super::timer::Timer;
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]
@@ -846,9 +847,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
+    use crate::client::legacy::timer;
     use crate::rt::{TokioExecutor, TokioTimer};
-
-    use crate::common::timer;
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
     struct KeyImpl(http::uri::Scheme, http::uri::Authority);
