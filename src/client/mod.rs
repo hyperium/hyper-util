@@ -10,6 +10,9 @@ pub mod pool;
 #[cfg(feature = "client-proxy")]
 pub mod proxy;
 
+#[cfg(all(feature = "client", feature = "http1"))]
+pub mod expect_continue;
+
 #[cfg(any(feature = "client-legacy", feature = "client-proxy"))]
 fn strip_ipv6_brackets(host: &str) -> &str {
     host.strip_prefix('[')
