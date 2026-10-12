@@ -1,13 +1,13 @@
 use std::error::Error as StdError;
-use std::future::poll_fn;
 use std::marker::PhantomData;
-use std::pin::{Pin, pin};
+use std::pin::Pin;
 use std::task::{self, Poll, ready};
 
-use bytes::Bytes;
-use http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
+use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri};
+use http_body::Body;
+use hyper::body::Incoming;
 use hyper::rt::{Read, ReadBufCursor, Write};
-use hyper::upgrade::Upgraded;
+use hyper::upgrade::{OnUpgrade, Upgraded};
 use pin_project_lite::pin_project;
 use tower_service::Service;
 
@@ -16,45 +16,81 @@ use crate::client::legacy::connect::{Connected, Connection};
 
 /// Tunnel proxy via HTTP CONNECT, preserving early data.
 ///
-/// This is a connector that can be used by the `legacy::Client`. It wraps
-/// another connector, and after getting an underlying connection, it
-/// establishes a tunnel by sending a real HTTP CONNECT request over an
-/// HTTP/1 connection and returning the upgraded IO.
+/// This wraps an HTTP service that talks to a proxy, and establishes a tunnel
+/// by sending a CONNECT request over it and returning the upgraded IO.
 ///
-/// Unlike [`Tunnel`](super::Tunnel), any bytes the destination sends
-/// immediately after the tunnel is established are preserved and replayed
-/// on the first reads, which is required for protocols where the server
-/// speaks first.
-#[derive(Debug, Clone)]
-pub struct HttpConnect<C> {
+/// Unlike [`Tunnel`](super::Tunnel), bytes the destination sends immediately
+/// after the tunnel is established are preserved and replayed on the first
+/// reads, which is required for protocols where the server speaks first.
+///
+/// # Wrapping a service
+///
+/// The wrapped service must send requests to the proxy, whatever destination
+/// `HttpConnect` is called with: the `Uri` passed to `call` is only used as
+/// the target of the CONNECT request.
+///
+/// Its response must carry the upgrade of the connection underneath, so that
+/// connection must support upgrades (for HTTP/1, it must have been created
+/// with `with_upgrades`). A service that rebuilds the response without its
+/// extensions will lose the upgrade, and the tunnel then fails with
+/// [`HttpConnectError::NoUpgrade`].
+///
+/// The request body type must be empty, since a CONNECT request cannot carry
+/// one. `B::default()` is used to create it.
+///
+/// # HTTP versions
+///
+/// Since the tunnel is established with a regular request, it works over any
+/// HTTP version the service speaks.
+///
+/// Over HTTP/1, the connection is consumed by the tunnel, so a service built
+/// on it can establish only one. Note also that
+/// `hyper::client::conn::http1::SendRequest` is not `Clone`, which the
+/// `legacy::Client` requires of a connector; using `HttpConnect` with that
+/// client needs a service that is.
+///
+/// Over HTTP/2, each tunnel is a single stream, so one connection to the
+/// proxy can carry several of them. Plain CONNECT tunneling does not need the
+/// extended CONNECT protocol, which only governs requests carrying a
+/// `:protocol` (such as WebSockets over HTTP/2).
+pub struct HttpConnect<S, B> {
     headers: Headers,
-    inner: C,
-    proxy_dst: Uri,
+    inner: S,
+    // `fn() -> B` so that `HttpConnect` is `Send`/`Sync` regardless of `B`.
+    _body: PhantomData<fn() -> B>,
 }
 
 /// An established CONNECT tunnel returned by [`HttpConnect`].
 ///
 /// Reads first drain any bytes the destination sent immediately after the
 /// tunnel was established, then continue on the underlying connection.
+///
+/// The wrapped service hides the underlying transport, so [`Connection`]
+/// reports no extra information about it.
 pub struct Tunneled {
     inner: Upgraded,
-    connected: Connected,
 }
 
 /// Error returned by the [`HttpConnect`] connector.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum HttpConnectError {
-    /// The underlying connector failed to connect to the proxy.
-    ConnectFailed(Box<dyn StdError + Send + Sync>),
-    /// The HTTP/1 handshake with the proxy failed.
-    Handshake(hyper::Error),
+    /// The destination could not be used as a CONNECT target.
+    InvalidTarget(Box<dyn StdError + Send + Sync>),
     /// The destination URI is missing a host.
     MissingHost,
+    /// The response was successful, but carried no tunnel.
+    ///
+    /// Either the status was not one the proxy upgrades on (over HTTP/2, only
+    /// `200` is), or a service in between rebuilt the response without its
+    /// extensions.
+    NoUpgrade(StatusCode),
     /// The proxy responded with `407 Proxy Authentication Required`.
     ProxyAuthRequired,
-    /// The connection closed before the tunnel was established.
-    UnexpectedEof,
+    /// The wrapped service failed to send the CONNECT request.
+    Service(Box<dyn StdError + Send + Sync>),
+    /// The tunnel could not be upgraded.
+    Upgrade(hyper::Error),
     /// The proxy responded with a non-successful status.
     Unsuccessful(StatusCode),
 }
@@ -76,21 +112,20 @@ pin_project! {
 
 type BoxConnecting = Pin<Box<dyn Future<Output = Result<Tunneled, HttpConnectError>> + Send>>;
 
-impl<C> HttpConnect<C> {
+impl<S, B> HttpConnect<S, B> {
     /// Create a new `HttpConnect` service.
     ///
-    /// This wraps an underlying connector, and stores the address of a
-    /// tunneling proxy server.
+    /// This wraps an HTTP service that is connected to a tunneling proxy
+    /// server. The service must accept requests with an empty body, and its
+    /// connection must support upgrades.
     ///
-    /// An `HttpConnect` can then be called with any destination. The `dst`
-    /// passed to `call` will not be used to create the underlying connection,
-    /// but will be used in an HTTP CONNECT request sent to the proxy
-    /// destination.
-    pub fn new(proxy_dst: Uri, connector: C) -> Self {
+    /// An `HttpConnect` can then be called with any destination, which will
+    /// be used as the target of an HTTP CONNECT request sent to the proxy.
+    pub fn new(service: S) -> Self {
         Self {
             headers: Headers::Empty,
-            inner: connector,
-            proxy_dst,
+            inner: service,
+            _body: PhantomData,
         }
     }
 
@@ -115,8 +150,21 @@ impl<C> HttpConnect<C> {
 
     /// Add extra headers to be sent with the CONNECT request.
     ///
-    /// If existing headers have been set, these will be merged.
+    /// If existing headers have been set, these will be merged, appending
+    /// values for names that are already present.
+    ///
+    /// A single `host` header set here replaces the one that would otherwise
+    /// be generated from the destination. Over HTTP/2 that is best avoided: a
+    /// `host` disagreeing with the request target makes the request
+    /// malformed, since the target is also sent as `:authority`.
     pub fn with_headers(mut self, mut headers: HeaderMap) -> Self {
+        // just in case the user passed credentials this way
+        for (name, value) in headers.iter_mut() {
+            if name == http::header::PROXY_AUTHORIZATION {
+                value.set_sensitive(true);
+            }
+        }
+
         match self.headers {
             Headers::Empty => {
                 self.headers = Headers::Extra(headers);
@@ -136,88 +184,80 @@ impl<C> HttpConnect<C> {
     }
 }
 
-impl<C> Service<Uri> for HttpConnect<C>
+impl<S, B> Service<Uri> for HttpConnect<S, B>
 where
-    C: Service<Uri>,
-    C::Future: Send + 'static,
-    C::Response: Read + Write + Connection + Unpin + Send + 'static,
-    C::Error: Into<Box<dyn StdError + Send + Sync>>,
+    S: Service<Request<B>, Response = Response<Incoming>>,
+    S::Future: Send + 'static,
+    S::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B: Body + Default,
 {
     type Response = Tunneled;
     type Error = HttpConnectError;
-    type Future = HttpConnecting<C::Future>;
+    type Future = HttpConnecting<S::Future>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        ready!(self.inner.poll_ready(cx)).map_err(|e| HttpConnectError::ConnectFailed(e.into()))?;
+        ready!(self.inner.poll_ready(cx)).map_err(|e| HttpConnectError::Service(e.into()))?;
         Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, dst: Uri) -> Self::Future {
-        let connecting = self.inner.call(self.proxy_dst.clone());
-        let headers = self.headers.clone();
+        let sending = match connect_request(&dst, &self.headers) {
+            Ok(req) => Ok(self.inner.call(req)),
+            Err(e) => Err(e),
+        };
 
         HttpConnecting {
             fut: Box::pin(async move {
-                let conn = connecting
-                    .await
-                    .map_err(|e| HttpConnectError::ConnectFailed(e.into()))?;
-                let connected = conn.connected();
-                handshake(
-                    conn,
-                    connected,
-                    dst.host().ok_or(HttpConnectError::MissingHost)?,
-                    dst.port().map(|p| p.as_u16()).unwrap_or(443),
-                    &headers,
-                )
-                .await
+                // The response is consumed before awaiting the upgrade, so it
+                // is never held across an await point.
+                let on_upgrade = {
+                    let res = sending?
+                        .await
+                        .map_err(|e| HttpConnectError::Service(e.into()))?;
+
+                    let status = res.status();
+                    if status == StatusCode::PROXY_AUTHENTICATION_REQUIRED {
+                        return Err(HttpConnectError::ProxyAuthRequired);
+                    }
+                    if !status.is_success() {
+                        return Err(HttpConnectError::Unsuccessful(status));
+                    }
+                    // A successful response doesn't guarantee an upgrade: an
+                    // HTTP/2 proxy only upgrades on `200`, and a service in
+                    // between may have rebuilt the response without the
+                    // extension. Report that instead of a vague upgrade error.
+                    if res.extensions().get::<OnUpgrade>().is_none() {
+                        return Err(HttpConnectError::NoUpgrade(status));
+                    }
+
+                    hyper::upgrade::on(res)
+                };
+
+                let upgraded = on_upgrade.await.map_err(HttpConnectError::Upgrade)?;
+
+                Ok(Tunneled { inner: upgraded })
             }),
             _marker: PhantomData,
         }
     }
 }
 
-impl<F> Future for HttpConnecting<F> {
-    type Output = Result<Tunneled, HttpConnectError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        self.project().fut.poll(cx)
-    }
-}
-
-async fn handshake<T>(
-    io: T,
-    connected: Connected,
-    host: &str,
-    port: u16,
-    headers: &Headers,
-) -> Result<Tunneled, HttpConnectError>
+fn connect_request<B>(dst: &Uri, headers: &Headers) -> Result<Request<B>, HttpConnectError>
 where
-    T: Read + Write + Unpin + Send + 'static,
+    B: Body + Default,
 {
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
-        .await
-        .map_err(HttpConnectError::Handshake)?;
-    let mut conn = pin!(conn.with_upgrades());
-    // `conn` must not be polled again once it has resolved.
-    let mut conn_done = false;
+    let host = dst.host().ok_or(HttpConnectError::MissingHost)?;
+    let port = dst.port_u16().unwrap_or(443);
 
-    // CONNECT uses the authority-form request target.
-    let authority = if host.contains(':') {
-        // an IPv6 literal must be bracketed
-        format!("[{host}]:{port}")
-    } else {
-        format!("{host}:{port}")
-    };
+    // CONNECT uses the authority-form request target. `Uri::host` already
+    // brackets an IPv6 literal, so this must not bracket it again.
+    let authority = format!("{host}:{port}");
 
-    let mut req = Request::new(EmptyBody);
+    let mut req = Request::new(B::default());
     *req.method_mut() = Method::CONNECT;
     *req.uri_mut() = authority
         .parse::<Uri>()
-        .map_err(|_| HttpConnectError::MissingHost)?;
-    req.headers_mut().insert(
-        http::header::HOST,
-        HeaderValue::from_str(&authority).map_err(|_| HttpConnectError::MissingHost)?,
-    );
+        .map_err(|e| HttpConnectError::InvalidTarget(e.into()))?;
 
     match headers {
         Headers::Auth(auth) => {
@@ -230,101 +270,40 @@ where
         Headers::Empty => (),
     }
 
-    // Drive the connection and the request in this task, rather than
-    // requiring an executor to spawn onto: the connection future resolves
-    // once the tunnel is upgraded (or fails).
-    let res = {
-        let mut send = pin!(sender.send_request(req));
-        poll_fn(|cx| {
-            if let Poll::Ready(result) = send.as_mut().poll(cx) {
-                return Poll::Ready(result.map_err(HttpConnectError::Handshake));
-            }
-            if !conn_done {
-                match conn.as_mut().poll(cx) {
-                    Poll::Ready(Ok(())) => {
-                        conn_done = true;
-                        // The connection may have delivered the response (and
-                        // upgraded) in that same poll.
-                        if let Poll::Ready(result) = send.as_mut().poll(cx) {
-                            return Poll::Ready(result.map_err(HttpConnectError::Handshake));
-                        }
-                        return Poll::Ready(Err(HttpConnectError::UnexpectedEof));
-                    }
-                    Poll::Ready(Err(e)) => {
-                        conn_done = true;
-                        return Poll::Ready(Err(HttpConnectError::Handshake(e)));
-                    }
-                    Poll::Pending => (),
-                }
-            }
-            Poll::Pending
-        })
-        .await?
-    };
+    // Last, and only if the user didn't provide one: extending appends, so
+    // inserting first would send two `Host` headers.
+    let host =
+        HeaderValue::from_str(&authority).map_err(|e| HttpConnectError::InvalidTarget(e.into()))?;
+    req.headers_mut().entry(http::header::HOST).or_insert(host);
 
-    if res.status() == StatusCode::PROXY_AUTHENTICATION_REQUIRED {
-        return Err(HttpConnectError::ProxyAuthRequired);
-    }
-    if !res.status().is_success() {
-        return Err(HttpConnectError::Unsuccessful(res.status()));
-    }
-
-    let mut on_upgrade = pin!(hyper::upgrade::on(res));
-    let upgraded = poll_fn(|cx| {
-        if let Poll::Ready(result) = on_upgrade.as_mut().poll(cx) {
-            return Poll::Ready(result.map_err(HttpConnectError::Handshake));
-        }
-        if !conn_done {
-            match conn.as_mut().poll(cx) {
-                Poll::Ready(Ok(())) => {
-                    conn_done = true;
-                    // A successful resolution means the upgrade was just
-                    // fulfilled.
-                    if let Poll::Ready(result) = on_upgrade.as_mut().poll(cx) {
-                        return Poll::Ready(result.map_err(HttpConnectError::Handshake));
-                    }
-                    return Poll::Ready(Err(HttpConnectError::UnexpectedEof));
-                }
-                Poll::Ready(Err(e)) => {
-                    conn_done = true;
-                    return Poll::Ready(Err(HttpConnectError::Handshake(e)));
-                }
-                Poll::Pending => (),
-            }
-        }
-        Poll::Pending
-    })
-    .await?;
-
-    // `sender` is kept alive until here so the connection isn't closed
-    // before the upgrade completes.
-    drop(sender);
-
-    Ok(Tunneled {
-        inner: upgraded,
-        connected,
-    })
+    Ok(req)
 }
 
-struct EmptyBody;
+impl<F> Future for HttpConnecting<F> {
+    type Output = Result<Tunneled, HttpConnectError>;
 
-impl http_body::Body for EmptyBody {
-    type Data = Bytes;
-    type Error = std::convert::Infallible;
-
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        _cx: &mut task::Context<'_>,
-    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
-        Poll::Ready(None)
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        self.project().fut.poll(cx)
     }
+}
 
-    fn is_end_stream(&self) -> bool {
-        true
+// Manual impls so that `B`, which is only a marker, doesn't get bounded.
+impl<S: Clone, B> Clone for HttpConnect<S, B> {
+    fn clone(&self) -> Self {
+        Self {
+            headers: self.headers.clone(),
+            inner: self.inner.clone(),
+            _body: PhantomData,
+        }
     }
+}
 
-    fn size_hint(&self) -> http_body::SizeHint {
-        http_body::SizeHint::with_exact(0)
+impl<S: std::fmt::Debug, B> std::fmt::Debug for HttpConnect<S, B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpConnect")
+            .field("headers", &self.headers)
+            .field("inner", &self.inner)
+            .finish()
     }
 }
 
@@ -376,7 +355,7 @@ impl Write for Tunneled {
 
 impl Connection for Tunneled {
     fn connected(&self) -> Connected {
-        self.connected.clone()
+        Connected::new()
     }
 }
 
@@ -391,15 +370,14 @@ impl std::fmt::Display for HttpConnectError {
         f.write_str("http connect error: ")?;
 
         match self {
-            HttpConnectError::ConnectFailed(_) => {
-                f.write_str("failed to create underlying connection")
-            }
-            HttpConnectError::Handshake(_) => f.write_str("handshake failed"),
+            HttpConnectError::InvalidTarget(_) => f.write_str("invalid destination"),
             HttpConnectError::MissingHost => f.write_str("missing destination host"),
-            HttpConnectError::ProxyAuthRequired => f.write_str("proxy authorization required"),
-            HttpConnectError::UnexpectedEof => {
-                f.write_str("connection closed before tunnel established")
+            HttpConnectError::NoUpgrade(status) => {
+                write!(f, "proxy replied {status} without upgrading the connection")
             }
+            HttpConnectError::ProxyAuthRequired => f.write_str("proxy authorization required"),
+            HttpConnectError::Service(_) => f.write_str("failed to send CONNECT request"),
+            HttpConnectError::Upgrade(_) => f.write_str("failed to upgrade tunnel"),
             HttpConnectError::Unsuccessful(status) => write!(f, "unsuccessful status ({status})"),
         }
     }
@@ -408,104 +386,283 @@ impl std::fmt::Display for HttpConnectError {
 impl std::error::Error for HttpConnectError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            HttpConnectError::ConnectFailed(e) => Some(&**e),
-            HttpConnectError::Handshake(e) => Some(e),
+            HttpConnectError::InvalidTarget(e) => Some(&**e),
+            HttpConnectError::Service(e) => Some(&**e),
+            HttpConnectError::Upgrade(e) => Some(e),
             _ => None,
         }
     }
 }
 
-#[cfg(all(test, feature = "tokio"))]
+#[cfg(all(test, feature = "tokio", feature = "http1"))]
 mod tests {
     use std::time::Duration;
 
-    use http::HeaderValue;
+    use bytes::Bytes;
+    use http::{HeaderMap, HeaderValue, Request, Response};
+    use http_body_util::Empty;
+    use hyper::body::Incoming;
+    use hyper::client::conn::http1;
+    use hyper::rt::Write as _;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
+    use tower_service::Service;
 
-    use super::{Headers, HttpConnectError, Tunneled, handshake};
-    use crate::client::legacy::connect::Connected;
+    use super::{Headers, HttpConnect, HttpConnectError, Tunneled};
     use crate::rt::TokioIo;
 
-    async fn read_request_head(server: &mut DuplexStream) -> String {
-        let mut head = Vec::new();
-        let mut byte = [0u8; 1];
-        while !head.ends_with(b"\r\n\r\n") {
-            server.read_exact(&mut byte).await.unwrap();
-            head.push(byte[0]);
+    // `SendRequest` doesn't implement `tower_service::Service`, so wrap it.
+    struct SendRequestService(http1::SendRequest<Empty<Bytes>>);
+
+    impl Service<Request<Empty<Bytes>>> for SendRequestService {
+        type Response = Response<Incoming>;
+        type Error = hyper::Error;
+        type Future =
+            std::pin::Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+        fn poll_ready(
+            &mut self,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            self.0.poll_ready(cx)
         }
-        String::from_utf8(head).unwrap().to_lowercase()
+
+        fn call(&mut self, req: Request<Empty<Bytes>>) -> Self::Future {
+            Box::pin(self.0.send_request(req))
+        }
     }
 
-    async fn start(
-        headers: Headers,
-    ) -> (
-        Result<Tunneled, HttpConnectError>,
-        tokio::sync::mpsc::UnboundedReceiver<String>,
-        tokio::task::JoinHandle<DuplexStream>,
-    ) {
-        let (client, server) = tokio::io::duplex(1024);
-        let (head_tx, head_rx) = tokio::sync::mpsc::unbounded_channel();
+    /// Read a request head, up to and including the empty line.
+    ///
+    /// Header names are lowercased, values are left alone.
+    async fn read_request_head(server: &mut DuplexStream) -> String {
+        let mut head = Vec::new();
 
-        let server = tokio::spawn(async move {
-            let mut server = server;
-            let head = read_request_head(&mut server).await;
-            head_tx.send(head).unwrap();
-            server
-                .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
-                .await
-                .unwrap();
-            server
+        // A timeout, so that a request that never arrives fails the test
+        // instead of hanging it in `proxy.await`.
+        tokio::time::timeout(Duration::from_secs(1), async {
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                server.read_exact(&mut byte).await.unwrap();
+                head.push(byte[0]);
+            }
+        })
+        .await
+        .expect("a request head should arrive");
+
+        String::from_utf8(head)
+            .unwrap()
+            .lines()
+            .enumerate()
+            .map(|(i, line)| match line.split_once(':') {
+                // The request line is left alone; it contains a colon too.
+                Some((name, value)) if i > 0 => {
+                    format!("{}:{}\r\n", name.to_lowercase(), value)
+                }
+                _ => format!("{line}\r\n"),
+            })
+            .collect()
+    }
+
+    /// Read from a tunnel until `expected` has arrived, or fail.
+    async fn read_exactly(io: &mut Tunneled, expected: &[u8]) -> Vec<u8> {
+        let mut received = Vec::new();
+        let mut buf = [0u8; 64];
+
+        // A timeout, so that losing data fails the test instead of hanging it.
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while received.len() < expected.len() {
+                let n = crate::rt::read(io, &mut buf).await.unwrap();
+                assert_ne!(n, 0, "eof before all data was received");
+                received.extend_from_slice(&buf[..n]);
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "timed out waiting for {expected:?}, only received {:?}",
+                String::from_utf8_lossy(&received)
+            )
         });
 
-        let result = tokio::time::timeout(
-            Duration::from_secs(1),
-            handshake(
-                TokioIo::new(client),
-                Connected::new(),
-                "example.com",
-                443,
-                &headers,
-            ),
-        )
-        .await
-        .expect("handshake should not hang");
+        received
+    }
 
-        (result, head_rx, server)
+    /// Tunnel to `dst` through a proxy that is scripted by `proxy`.
+    async fn connect_to<P, F>(
+        headers: Headers,
+        dst: &str,
+        proxy: P,
+    ) -> (
+        Result<Tunneled, HttpConnectError>,
+        tokio::task::JoinHandle<()>,
+    )
+    where
+        P: FnOnce(DuplexStream) -> F + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let (client, server) = tokio::io::duplex(1024);
+        let proxy = tokio::spawn(proxy(server));
+
+        let (sender, conn) = http1::handshake(TokioIo::new(client)).await.unwrap();
+        tokio::spawn(conn.with_upgrades());
+
+        // Through the public builders, so that they're covered too.
+        let service = SendRequestService(sender);
+        let mut connector = match headers {
+            Headers::Empty => HttpConnect::new(service),
+            Headers::Auth(auth) => HttpConnect::new(service).with_auth(auth),
+            Headers::Extra(extra) => HttpConnect::new(service).with_headers(extra),
+        };
+
+        let result =
+            tokio::time::timeout(Duration::from_secs(1), connector.call(dst.parse().unwrap()))
+                .await
+                .expect("connecting should not hang");
+
+        (result, proxy)
+    }
+
+    /// Connect `HttpConnect` to a proxy that is scripted by `proxy`.
+    async fn connect<P, F>(
+        headers: Headers,
+        proxy: P,
+    ) -> (
+        Result<Tunneled, HttpConnectError>,
+        tokio::task::JoinHandle<()>,
+    )
+    where
+        P: FnOnce(DuplexStream) -> F + Send + 'static,
+        F: Future<Output = ()> + Send + 'static,
+    {
+        connect_to(headers, "https://example.com", proxy).await
+    }
+
+    /// A proxy that accepts the tunnel, handing the request head back.
+    async fn accepting(
+        mut server: DuplexStream,
+        head_tx: tokio::sync::oneshot::Sender<String>,
+    ) -> DuplexStream {
+        let head = read_request_head(&mut server).await;
+        head_tx.send(head).unwrap();
+        server
+            .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            .await
+            .unwrap();
+        server
     }
 
     #[tokio::test]
     async fn established() {
-        let (result, mut heads, server) = start(Headers::Empty).await;
+        let (head_tx, head_rx) = tokio::sync::oneshot::channel();
+        let (result, proxy) = connect(Headers::Empty, |server| async move {
+            accepting(server, head_tx).await;
+        })
+        .await;
+
         result.expect("200 response should establish the tunnel");
-        let head = heads.recv().await.unwrap();
+        let head = head_rx.await.unwrap();
         assert!(
-            head.starts_with("connect example.com:443 http/1.1\r\n"),
+            head.starts_with("CONNECT example.com:443 HTTP/1.1\r\n"),
             "unexpected request line: {head:?}"
         );
         assert!(
             head.contains("host: example.com:443\r\n"),
             "missing host header: {head:?}"
         );
-        server.await.unwrap();
+        proxy.await.unwrap();
     }
 
     #[tokio::test]
     async fn auth_header_is_sent() {
-        let (result, mut heads, server) =
-            start(Headers::Auth(HeaderValue::from_static("Basic dGVzdA=="))).await;
+        let (head_tx, head_rx) = tokio::sync::oneshot::channel();
+        let auth = Headers::Auth(HeaderValue::from_static("Basic dGVzdA=="));
+        let (result, proxy) = connect(auth, |server| async move {
+            accepting(server, head_tx).await;
+        })
+        .await;
+
         result.expect("200 response should establish the tunnel");
-        let head = heads.recv().await.unwrap();
+        let head = head_rx.await.unwrap();
         assert!(
-            head.contains("proxy-authorization: basic dgvzda==\r\n"),
+            head.contains("proxy-authorization: Basic dGVzdA==\r\n"),
             "missing auth header: {head:?}"
         );
-        server.await.unwrap();
+        proxy.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn extra_headers_are_sent() {
+        let (head_tx, head_rx) = tokio::sync::oneshot::channel();
+        let mut extra = HeaderMap::new();
+        extra.insert("x-proxy-tag", HeaderValue::from_static("tagged"));
+
+        let (result, proxy) = connect(Headers::Extra(extra), |server| async move {
+            accepting(server, head_tx).await;
+        })
+        .await;
+
+        result.expect("200 response should establish the tunnel");
+        let head = head_rx.await.unwrap();
+        assert!(
+            head.contains("x-proxy-tag: tagged\r\n"),
+            "missing extra header: {head:?}"
+        );
+        proxy.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn host_header_is_sent_once() {
+        let (head_tx, head_rx) = tokio::sync::oneshot::channel();
+        // Extending a `HeaderMap` appends, so a generated `host` would be
+        // sent alongside this one, which makes the request malformed.
+        let mut extra = HeaderMap::new();
+        extra.insert(http::header::HOST, HeaderValue::from_static("proxy.test"));
+
+        let (result, proxy) = connect(Headers::Extra(extra), |server| async move {
+            accepting(server, head_tx).await;
+        })
+        .await;
+
+        result.expect("200 response should establish the tunnel");
+        let head = head_rx.await.unwrap();
+        assert_eq!(
+            head.matches("host:").count(),
+            1,
+            "expected exactly one host header: {head:?}"
+        );
+        assert!(
+            head.contains("host: proxy.test\r\n"),
+            "user host header should win: {head:?}"
+        );
+        proxy.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_closes_the_tunnel() {
+        let (head_tx, _head_rx) = tokio::sync::oneshot::channel();
+        let (result, proxy) = connect(Headers::Empty, |server| async move {
+            let mut server = accepting(server, head_tx).await;
+            // The peer must see the shutdown as an end of stream. Timed out,
+            // so that a shutdown that doesn't arrive fails instead of hanging.
+            let mut buf = [0u8; 8];
+            let n = tokio::time::timeout(Duration::from_secs(1), server.read(&mut buf))
+                .await
+                .expect("shutdown should reach the peer")
+                .unwrap();
+            assert_eq!(n, 0, "expected eof after shutdown");
+        })
+        .await;
+
+        let mut io = result.expect("200 response should establish the tunnel");
+        std::future::poll_fn(|cx| std::pin::Pin::new(&mut io).poll_shutdown(cx))
+            .await
+            .expect("shutdown");
+        proxy.await.unwrap();
     }
 
     #[tokio::test]
     async fn early_data_is_preserved() {
-        let (client, mut server) = tokio::io::duplex(1024);
-        let server = tokio::spawn(async move {
+        let (result, proxy) = connect(Headers::Empty, |mut server| async move {
             read_request_head(&mut server).await;
             // Early data in the same write as the response.
             server
@@ -514,101 +671,59 @@ mod tests {
                 .unwrap();
             tokio::time::sleep(Duration::from_millis(50)).await;
             server.write_all(b" WORLD").await.unwrap();
-        });
+        })
+        .await;
 
-        let mut io = tokio::time::timeout(
-            Duration::from_secs(1),
-            handshake(
-                TokioIo::new(client),
-                Connected::new(),
-                "example.com",
-                443,
-                &Headers::Empty,
-            ),
-        )
-        .await
-        .expect("handshake should not hang")
-        .expect("early data must not prevent establishing the tunnel");
+        let mut io = result.expect("early data must not prevent establishing the tunnel");
 
-        let mut buf = [0u8; 16];
-        let mut received = Vec::new();
-        while received.len() < b"HELLO WORLD".len() {
-            let n = crate::rt::read(&mut io, &mut buf).await.unwrap();
-            assert_ne!(n, 0, "eof before all data was received");
-            received.extend_from_slice(&buf[..n]);
-        }
         // The early bytes must come through first, in order.
+        let received = read_exactly(&mut io, b"HELLO WORLD").await;
         assert_eq!(received, b"HELLO WORLD");
-        server.await.unwrap();
+        proxy.await.unwrap();
     }
 
     #[tokio::test]
     async fn tunnel_is_bidirectional() {
-        let (client, mut server) = tokio::io::duplex(1024);
-        let server = tokio::spawn(async move {
-            read_request_head(&mut server).await;
-            server
-                .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
-                .await
-                .unwrap();
+        let (head_tx, _head_rx) = tokio::sync::oneshot::channel();
+        let (result, proxy) = connect(Headers::Empty, |server| async move {
+            let mut server = accepting(server, head_tx).await;
             let mut ping = [0u8; 4];
             server.read_exact(&mut ping).await.unwrap();
             assert_eq!(&ping, b"ping");
             server.write_all(b"pong").await.unwrap();
-        });
+        })
+        .await;
 
-        let mut io = tokio::time::timeout(
-            Duration::from_secs(1),
-            handshake(
-                TokioIo::new(client),
-                Connected::new(),
-                "example.com",
-                443,
-                &Headers::Empty,
-            ),
-        )
-        .await
-        .expect("handshake should not hang")
-        .expect("200 response should establish the tunnel");
+        let mut io = result.expect("200 response should establish the tunnel");
 
         crate::rt::write_all(&mut io, b"ping").await.unwrap();
         let mut buf = [0u8; 4];
         let n = crate::rt::read(&mut io, &mut buf).await.unwrap();
         assert_eq!(&buf[..n], b"pong");
-        server.await.unwrap();
+        proxy.await.unwrap();
     }
 
-    async fn failing_handshake(response: &'static [u8]) -> HttpConnectError {
-        let (client, mut server) = tokio::io::duplex(1024);
-        tokio::spawn(async move {
+    async fn failing_connect(response: &'static [u8]) -> HttpConnectError {
+        let (result, proxy) = connect(Headers::Empty, move |mut server| async move {
             read_request_head(&mut server).await;
             server.write_all(response).await.unwrap();
-        });
+        })
+        .await;
 
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            handshake(
-                TokioIo::new(client),
-                Connected::new(),
-                "example.com",
-                443,
-                &Headers::Empty,
-            ),
-        )
-        .await
-        .expect("handshake should not hang")
-        .expect_err("non-200 response should fail the handshake")
+        let err = result.expect_err("non-200 response should fail the handshake");
+        proxy.await.unwrap();
+        err
     }
 
     #[tokio::test]
     async fn proxy_auth_required() {
-        let err = failing_handshake(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n").await;
+        let err = failing_connect(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n").await;
         assert!(matches!(err, HttpConnectError::ProxyAuthRequired));
     }
 
     #[tokio::test]
     async fn non_2xx_is_unsuccessful() {
-        let err = failing_handshake(b"HTTP/1.1 500 Internal Server Error\r\n\r\n").await;
+        let err = failing_connect(b"HTTP/1.1 500 Internal Server Error\r\n\r\n").await;
         match err {
             HttpConnectError::Unsuccessful(status) => assert_eq!(status, 500),
             other => panic!("unexpected error: {other:?}"),
@@ -617,28 +732,95 @@ mod tests {
 
     #[tokio::test]
     async fn eof_before_response() {
-        let (client, mut server) = tokio::io::duplex(1024);
-        tokio::spawn(async move {
+        let (result, proxy) = connect(Headers::Empty, |mut server| async move {
             read_request_head(&mut server).await;
             drop(server);
-        });
+        })
+        .await;
 
-        let err = tokio::time::timeout(
-            Duration::from_secs(1),
-            handshake(
-                TokioIo::new(client),
-                Connected::new(),
-                "example.com",
-                443,
-                &Headers::Empty,
-            ),
+        let err = result.expect_err("eof should fail the handshake");
+        assert!(matches!(err, HttpConnectError::Service(_)));
+        proxy.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn success_without_an_upgrade_is_reported() {
+        // A 2xx that hyper doesn't treat as an upgrade must not come back as a
+        // vague upgrade failure.
+        let err = failing_connect(b"HTTP/1.1 204 No Content\r\n\r\n").await;
+        match err {
+            HttpConnectError::NoUpgrade(status) => assert_eq!(status, 204),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ipv6_target_is_bracketed_once() {
+        let (head_tx, head_rx) = tokio::sync::oneshot::channel();
+        let (result, proxy) = connect_to(
+            Headers::Empty,
+            "https://[2001:db8::1]:8443",
+            |server| async move {
+                accepting(server, head_tx).await;
+            },
         )
-        .await
-        .expect("handshake should not hang")
-        .expect_err("eof should fail the handshake");
-        assert!(matches!(
-            err,
-            HttpConnectError::Handshake(_) | HttpConnectError::UnexpectedEof
-        ));
+        .await;
+
+        result.expect("an IPv6 destination should establish the tunnel");
+        let head = head_rx.await.unwrap();
+        assert!(
+            head.starts_with("CONNECT [2001:db8::1]:8443 HTTP/1.1\r\n"),
+            "unexpected request line: {head:?}"
+        );
+        assert!(
+            head.contains("host: [2001:db8::1]:8443\r\n"),
+            "unexpected host header: {head:?}"
+        );
+        proxy.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_host_is_rejected() {
+        let (client, _server) = tokio::io::duplex(1024);
+        let (sender, conn) = http1::handshake(TokioIo::new(client)).await.unwrap();
+        tokio::spawn(conn.with_upgrades());
+
+        let mut connector = HttpConnect::new(SendRequestService(sender));
+        let err = connector
+            .call("/no-host".parse().unwrap())
+            .await
+            .expect_err("a uri without a host should be rejected");
+        assert!(matches!(err, HttpConnectError::MissingHost));
+    }
+
+    // `HttpConnect` must satisfy the bounds of a `legacy::Client` connector.
+    // The service has to be `Clone + Send + Sync`, which an HTTP/1
+    // `SendRequest` is not, so this stands in for one that is.
+    #[allow(dead_code)]
+    fn assert_usable_as_connector() {
+        #[derive(Clone)]
+        struct CloneableService;
+
+        impl Service<Request<Empty<Bytes>>> for CloneableService {
+            type Response = Response<Incoming>;
+            type Error = hyper::Error;
+            type Future =
+                std::pin::Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+            fn poll_ready(
+                &mut self,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Result<(), Self::Error>> {
+                unreachable!("only the bounds matter")
+            }
+
+            fn call(&mut self, _: Request<Empty<Bytes>>) -> Self::Future {
+                unreachable!("only the bounds matter")
+            }
+        }
+
+        fn is_connector<C: crate::client::legacy::connect::Connect>(_: C) {}
+
+        is_connector(HttpConnect::<_, Empty<Bytes>>::new(CloneableService));
     }
 }

@@ -7,6 +7,36 @@ use tower_service::Service;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::connect::proxy::{SocksV4, SocksV5, Tunnel};
 
+/// Read from `io` until `expected` has arrived, or fail.
+///
+/// Timed out rather than unbounded, so that losing data fails a test instead
+/// of hanging it.
+#[cfg(all(not(miri), any(feature = "http1", feature = "http2")))]
+async fn read_exactly<T>(io: &mut T, expected: &[u8]) -> Vec<u8>
+where
+    T: tokio::io::AsyncRead + Unpin,
+{
+    let mut received = Vec::new();
+    let mut buf = [0u8; 64];
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while received.len() < expected.len() {
+            let n = io.read(&mut buf).await.expect("read");
+            assert_ne!(n, 0, "eof before all data was received");
+            received.extend_from_slice(&buf[..n]);
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "timed out waiting for {expected:?}, only received {:?}",
+            String::from_utf8_lossy(&received)
+        )
+    });
+
+    received
+}
+
 #[cfg(not(miri))]
 #[tokio::test]
 async fn test_tunnel_works() {
@@ -703,121 +733,267 @@ async fn test_socks_v4_with_ipv6_target_fails() {
 }
 
 #[cfg(all(not(miri), feature = "http1"))]
-#[tokio::test]
-async fn test_http_connect_works() {
-    use hyper_util::client::legacy::connect::proxy::HttpConnect;
+mod http_connect {
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
 
-    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = tcp.local_addr().expect("local_addr");
+    use bytes::Bytes;
+    use http::{Request, Response};
+    use http_body_util::Empty;
+    use hyper::body::Incoming;
+    use hyper::client::conn::http1;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tower_service::Service;
 
-    let proxy_dst = format!("http://{addr}").parse().expect("uri");
-    let mut connector = HttpConnect::new(proxy_dst, HttpConnector::new());
-
-    // Client
-    //
-    // Will use `HttpConnect` to establish a proxy tunnel.
-    let t1 = tokio::spawn(async move {
-        let _conn = connector
-            .call("https://hyper.rs".parse().unwrap())
-            .await
-            .expect("tunnel");
-    });
-
-    // Proxy
-    //
-    // Will receive the CONNECT request and reply with 200.
-    let t2 = tokio::spawn(async move {
-        let (mut io, _) = tcp.accept().await.expect("accept");
-
-        let mut head = Vec::new();
-        while !head.ends_with(b"\r\n\r\n") {
-            let mut byte = [0u8; 1];
-            io.read_exact(&mut byte).await.expect("read 1");
-            head.push(byte[0]);
-        }
-        let head = String::from_utf8(head).expect("utf8");
-        assert!(
-            head.starts_with("CONNECT hyper.rs:443 HTTP/1.1\r\n"),
-            "unexpected request line: {head:?}"
-        );
-        assert!(
-            head.to_lowercase().contains("host: hyper.rs:443\r\n"),
-            "missing host header: {head:?}"
-        );
-
-        io.write_all(b"HTTP/1.1 200 OK\r\n\r\n")
-            .await
-            .expect("write 1");
-    });
-
-    t1.await.expect("task - client");
-    t2.await.expect("task - proxy");
-}
-
-#[cfg(all(not(miri), feature = "http1"))]
-#[tokio::test]
-async fn test_http_connect_preserves_early_data() {
-    use hyper_util::client::legacy::connect::proxy::HttpConnect;
+    use hyper_util::client::legacy::connect::proxy::{HttpConnect, Tunneled};
     use hyper_util::rt::TokioIo;
 
-    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = tcp.local_addr().expect("local_addr");
+    use super::read_exactly;
 
-    let proxy_dst = format!("http://{addr}").parse().expect("uri");
-    let mut connector = HttpConnect::new(proxy_dst, HttpConnector::new());
+    // `SendRequest` doesn't implement `tower_service::Service`, so wrap it.
+    struct SendRequestService(http1::SendRequest<Empty<Bytes>>);
 
-    // Client
-    //
-    // The destination speaks first: its bytes must arrive through the tunnel
-    // even though they were received together with the proxy's response.
-    let t1 = tokio::spawn(async move {
-        let conn = connector
-            .call("https://hyper.rs".parse().unwrap())
-            .await
-            .expect("tunnel");
-        let mut tcp = TokioIo::new(conn);
+    impl Service<Request<Empty<Bytes>>> for SendRequestService {
+        type Response = Response<Incoming>;
+        type Error = hyper::Error;
+        type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-        let mut received = Vec::new();
-        let mut buf = [0u8; 64];
-        while received.len() < b"server speaks first".len() {
-            let n = tcp.read(&mut buf).await.expect("read 1");
-            assert_ne!(n, 0, "eof before all early data was received");
-            received.extend_from_slice(&buf[..n]);
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.0.poll_ready(cx)
         }
-        assert_eq!(received, b"server speaks first");
 
-        tcp.write_all(b"Hello World!").await.expect("write 1");
+        fn call(&mut self, req: Request<Empty<Bytes>>) -> Self::Future {
+            Box::pin(self.0.send_request(req))
+        }
+    }
 
-        let n = tcp.read(&mut buf).await.expect("read 2");
-        assert_eq!(&buf[..n], b"Goodbye!");
-    });
+    /// Open an HTTP/1 connection to `addr` and tunnel to `dst` through it.
+    async fn tunnel_to(addr: std::net::SocketAddr, dst: &str) -> Tunneled {
+        let tcp = TcpStream::connect(addr).await.expect("connect");
+        let (sender, conn) = http1::handshake(TokioIo::new(tcp))
+            .await
+            .expect("handshake");
+        tokio::spawn(conn.with_upgrades());
 
-    // Proxy
-    //
-    // Will reply with 200 and the destination's first bytes in a single
-    // write, then tunnel blindly.
-    let t2 = tokio::spawn(async move {
-        let (mut io, _) = tcp.accept().await.expect("accept");
+        let mut connector = HttpConnect::new(SendRequestService(sender));
+        connector
+            .call(dst.parse().expect("uri"))
+            .await
+            .expect("tunnel")
+    }
 
+    /// Read a request head, up to and including the empty line.
+    async fn read_request_head(io: &mut TcpStream) -> String {
         let mut head = Vec::new();
+        let mut byte = [0u8; 1];
         while !head.ends_with(b"\r\n\r\n") {
-            let mut byte = [0u8; 1];
-            io.read_exact(&mut byte).await.expect("read 1");
+            io.read_exact(&mut byte).await.expect("read head");
             head.push(byte[0]);
         }
+        String::from_utf8(head).expect("utf8")
+    }
 
-        io.write_all(b"HTTP/1.1 200 OK\r\n\r\nserver speaks")
-            .await
-            .expect("write 1");
-        io.write_all(b" first").await.expect("write 2");
+    #[tokio::test]
+    async fn test_http_connect_works() {
+        let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = tcp.local_addr().expect("local_addr");
 
-        let mut buf = [0u8; 64];
-        let n = io.read(&mut buf).await.expect("read 2");
-        assert_eq!(&buf[..n], b"Hello World!");
+        // Client
+        //
+        // Will use `HttpConnect` to establish a proxy tunnel.
+        let t1 = tokio::spawn(async move {
+            tunnel_to(addr, "https://hyper.rs").await;
+        });
 
-        io.write_all(b"Goodbye!").await.expect("write 3");
-    });
+        // Proxy
+        //
+        // Will receive the CONNECT request and reply with 200.
+        let t2 = tokio::spawn(async move {
+            let (mut io, _) = tcp.accept().await.expect("accept");
 
-    t1.await.expect("task - client");
-    t2.await.expect("task - proxy");
+            let head = read_request_head(&mut io).await;
+            assert!(
+                head.starts_with("CONNECT hyper.rs:443 HTTP/1.1\r\n"),
+                "unexpected request line: {head:?}"
+            );
+            assert!(
+                head.to_lowercase().contains("host: hyper.rs:443\r\n"),
+                "missing host header: {head:?}"
+            );
+
+            io.write_all(b"HTTP/1.1 200 OK\r\n\r\n")
+                .await
+                .expect("write 1");
+        });
+
+        t1.await.expect("task - client");
+        t2.await.expect("task - proxy");
+    }
+
+    #[tokio::test]
+    async fn test_http_connect_preserves_early_data() {
+        let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = tcp.local_addr().expect("local_addr");
+
+        // Client
+        //
+        // The destination speaks first: its bytes must arrive through the
+        // tunnel even though they were received with the proxy's response.
+        let t1 = tokio::spawn(async move {
+            let mut tcp = TokioIo::new(tunnel_to(addr, "https://hyper.rs").await);
+
+            // Timeouts, so that losing data fails the test instead of
+            // hanging it.
+            let received = read_exactly(&mut tcp, b"server speaks first").await;
+            assert_eq!(received, b"server speaks first");
+
+            tcp.write_all(b"Hello World!").await.expect("write 1");
+
+            let received = read_exactly(&mut tcp, b"Goodbye!").await;
+            assert_eq!(received, b"Goodbye!");
+        });
+
+        // Proxy
+        //
+        // Will reply with 200 and the destination's first bytes in a single
+        // write, then tunnel blindly.
+        let t2 = tokio::spawn(async move {
+            let (mut io, _) = tcp.accept().await.expect("accept");
+            read_request_head(&mut io).await;
+
+            io.write_all(b"HTTP/1.1 200 OK\r\n\r\nserver speaks")
+                .await
+                .expect("write 1");
+            io.write_all(b" first").await.expect("write 2");
+
+            let mut buf = [0u8; 64];
+            let n = io.read(&mut buf).await.expect("read 1");
+            assert_eq!(&buf[..n], b"Hello World!");
+
+            io.write_all(b"Goodbye!").await.expect("write 3");
+        });
+
+        t1.await.expect("task - client");
+        t2.await.expect("task - proxy");
+    }
+}
+
+#[cfg(all(not(miri), feature = "http2"))]
+mod http_connect_h2 {
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    use bytes::Bytes;
+    use http::{Method, Request, Response};
+    use http_body_util::Empty;
+    use hyper::body::Incoming;
+    use hyper::client::conn::http2;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tower_service::Service;
+
+    use hyper_util::client::legacy::connect::proxy::HttpConnect;
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    use super::read_exactly;
+
+    // `SendRequest` doesn't implement `tower_service::Service`, so wrap it.
+    struct SendRequestService(http2::SendRequest<Empty<Bytes>>);
+
+    impl Service<Request<Empty<Bytes>>> for SendRequestService {
+        type Response = Response<Incoming>;
+        type Error = hyper::Error;
+        type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.0.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: Request<Empty<Bytes>>) -> Self::Future {
+            Box::pin(self.0.send_request(req))
+        }
+    }
+
+    // A tunnel over HTTP/2 is a single stream, so the same connection could
+    // carry more of them.
+    #[tokio::test]
+    async fn test_http_connect_over_h2_works() {
+        let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = tcp.local_addr().expect("local_addr");
+        let (seen_tx, mut seen_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // Proxy
+        //
+        // An HTTP/2 server that upgrades the CONNECT stream, then speaks
+        // first and echoes whatever the client sends back.
+        let t1 = tokio::spawn(async move {
+            let (io, _) = tcp.accept().await.expect("accept");
+
+            let service = hyper::service::service_fn(move |req: Request<Incoming>| {
+                let seen = seen_tx.clone();
+                async move {
+                    // Reported back rather than asserted here: this task is
+                    // aborted at the end, so a panic could go unnoticed.
+                    let _ = seen.send((
+                        req.method().clone(),
+                        req.uri().authority().map(|a| a.to_string()),
+                    ));
+
+                    tokio::spawn(async move {
+                        let upgraded = hyper::upgrade::on(req).await.expect("upgrade");
+                        let mut io = TokioIo::new(upgraded);
+
+                        io.write_all(b"server speaks first").await.expect("write 1");
+
+                        let mut buf = [0u8; 64];
+                        let n = io.read(&mut buf).await.expect("read 1");
+                        io.write_all(&buf[..n]).await.expect("write 2");
+                    });
+
+                    Ok::<_, hyper::Error>(Response::new(Empty::<Bytes>::new()))
+                }
+            });
+
+            hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                .serve_connection(TokioIo::new(io), service)
+                .await
+                .expect("serve");
+        });
+
+        // Client
+        //
+        // Establishes the tunnel over an HTTP/2 connection to the proxy.
+        let t2 = tokio::spawn(async move {
+            let tcp = TcpStream::connect(addr).await.expect("connect");
+            let (sender, conn) = http2::handshake(TokioExecutor::new(), TokioIo::new(tcp))
+                .await
+                .expect("handshake");
+            tokio::spawn(conn);
+
+            let mut connector = HttpConnect::new(SendRequestService(sender));
+            let tunneled = connector
+                .call("https://hyper.rs".parse().expect("uri"))
+                .await
+                .expect("tunnel");
+            let mut io = TokioIo::new(tunneled);
+
+            let received = read_exactly(&mut io, b"server speaks first").await;
+            assert_eq!(received, b"server speaks first");
+
+            io.write_all(b"Hello World!").await.expect("write 1");
+
+            let received = read_exactly(&mut io, b"Hello World!").await;
+            assert_eq!(received, b"Hello World!");
+        });
+
+        t2.await.expect("task - client");
+
+        // The proxy really did see a CONNECT for the expected authority.
+        let (method, authority) = seen_rx.recv().await.expect("proxy saw a request");
+        assert_eq!(method, Method::CONNECT);
+        assert_eq!(authority.as_deref(), Some("hyper.rs:443"));
+
+        t1.abort();
+    }
 }
