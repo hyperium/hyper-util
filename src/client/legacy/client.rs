@@ -20,7 +20,7 @@ use hyper::{Method, Request, Response, Uri, Version, body::Body};
 use sync_wrapper::SyncWrapper;
 use tracing::{debug, trace, warn};
 
-#[cfg(feature = "tokio")]
+#[cfg(all(feature = "client-legacy-http-connector", feature = "tokio"))]
 use super::connect::HttpConnector;
 use super::connect::capture::CaptureConnectionExtension;
 use super::connect::{Alpn, Connect, Connected, Connection};
@@ -1616,7 +1616,7 @@ impl Builder {
     }
 
     /// Build a client with this configuration and the default `HttpConnector`.
-    #[cfg(feature = "tokio")]
+    #[cfg(all(feature = "client-legacy-http-connector", feature = "tokio"))]
     pub fn build_http<B>(&self) -> Client<HttpConnector, B>
     where
         B: Body + Send,

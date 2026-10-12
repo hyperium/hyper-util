@@ -65,6 +65,7 @@ default = []
 full = [
     "client",
     "client-legacy",
+    "client-legacy-http-connector",
     "client-pool",
     "client-proxy",
     "client-proxy-system",
@@ -79,7 +80,8 @@ full = [
 ]
 
 client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
-client-legacy = ["client", "tokio/net", "dep:socket2", "tokio/sync", "dep:libc", "dep:futures-util", "dep:httparse", "dep:sync_wrapper"]
+client-legacy = ["client", "tokio/sync", "dep:futures-util", "dep:httparse", "dep:sync_wrapper"]
+client-legacy-http-connector = ["dep:libc", "dep:socket2", "tokio/net"]
 client-pool = ["client", "dep:futures-util", "dep:tower-layer", "tokio/sync"]
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
 client-proxy-system = ["dep:system-configuration", "dep:windows-registry"]

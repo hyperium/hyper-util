@@ -1,7 +1,7 @@
 check-client-features:
     cargo hack --no-dev-deps check --feature-powerset --depth 2 \
       --features=client \
-      --include-features client-legacy,client-pool,client-proxy,client-proxy-system,http1,http2,tokio,tracing
+      --include-features client-legacy,client-legacy-http-connector,client-pool,client-proxy,client-proxy-system,http1,http2,tokio,tracing
 
 check-server-features:
     cargo hack --no-dev-deps check --feature-powerset --depth 2 \
