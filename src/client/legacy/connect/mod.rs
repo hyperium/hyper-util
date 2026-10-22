@@ -3,7 +3,8 @@
 //! This module contains:
 //!
 //! - A default [`HttpConnector`][] that does DNS resolution and establishes
-//!   connections over TCP.
+//!   connections over TCP. This connector is gated behind the
+//!   `client-legacy-http-connector` feature flag.
 //! - Types to build custom connectors.
 //!
 //! # Connectors
@@ -72,12 +73,12 @@ use std::{
 
 use ::http::Extensions;
 
-#[cfg(feature = "tokio")]
+#[cfg(all(feature = "client-legacy-http-connector", feature = "tokio"))]
 pub use self::http::{HttpConnector, HttpInfo};
 
 #[cfg(feature = "tokio")]
 pub mod dns;
-#[cfg(feature = "tokio")]
+#[cfg(all(feature = "client-legacy-http-connector", feature = "tokio"))]
 mod http;
 
 pub mod proxy;

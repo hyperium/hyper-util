@@ -21,7 +21,7 @@
 //! });
 //! ```
 use std::error::Error;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::task::{self, Poll};
@@ -30,6 +30,10 @@ use std::{fmt, io, vec};
 use tokio::task::JoinHandle;
 use tower_service::Service;
 
+#[cfg(feature = "client-legacy-http-connector")]
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+
+#[cfg(feature = "client-legacy-http-connector")]
 pub(super) use self::sealed::Resolve;
 
 /// A domain name to resolve into IP addresses.
@@ -179,6 +183,7 @@ pub(super) struct SocketAddrs {
     iter: vec::IntoIter<SocketAddr>,
 }
 
+#[cfg(feature = "client-legacy-http-connector")]
 impl SocketAddrs {
     pub(super) fn new(addrs: Vec<SocketAddr>) -> Self {
         SocketAddrs {
@@ -249,6 +254,7 @@ impl Iterator for SocketAddrs {
     }
 }
 
+#[cfg(all(feature = "client-legacy-http-connector"))]
 mod sealed {
     use std::task::{self, Poll};
 
@@ -285,6 +291,7 @@ mod sealed {
     }
 }
 
+#[cfg(feature = "client-legacy-http-connector")]
 pub(super) async fn resolve<R>(resolver: &mut R, name: Name) -> Result<R::Addrs, R::Error>
 where
     R: Resolve,
