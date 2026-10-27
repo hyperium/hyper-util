@@ -63,8 +63,12 @@ pub struct HttpInfo {
     local_addr: SocketAddr,
 }
 
+type TcpSocketInitializer =
+    Arc<dyn Fn(&std::net::TcpStream, SocketAddr) -> io::Result<()> + Send + Sync>;
+
 #[derive(Clone)]
 struct Config {
+    socket_initializer: Option<TcpSocketInitializer>,
     connect_timeout: Option<Duration>,
     enforce_http: bool,
     happy_eyeballs_timeout: Option<Duration>,
@@ -223,6 +227,7 @@ impl<R> HttpConnector<R> {
     pub fn new_with_resolver(resolver: R) -> HttpConnector<R> {
         HttpConnector {
             config: Arc::new(Config {
+                socket_initializer: None,
                 connect_timeout: None,
                 enforce_http: true,
                 happy_eyeballs_timeout: Some(Duration::from_millis(300)),
@@ -293,6 +298,30 @@ impl<R> HttpConnector<R> {
     #[inline]
     pub fn set_nodelay(&mut self, nodelay: bool) {
         self.config_mut().nodelay = nodelay;
+    }
+
+    /// Sets a callback to initialize each newly created native TCP socket.
+    ///
+    /// The callback runs synchronously after nonblocking mode and all connector
+    /// socket options are applied, but before local-address binding and connect.
+    /// Callback changes to socket options take precedence over connector settings.
+    /// It receives the resolved destination and may capture shared state.
+    /// It must not bind, connect, shut down, or perform I/O on the socket, or
+    /// change its nonblocking mode. It must not block the runtime thread.
+    /// Configured local-address binding still runs after the callback, including
+    /// the wildcard bind required on Windows.
+    ///
+    /// An error prevents this socket from connecting and is handled as a failed
+    /// address attempt. Remaining addresses, including Happy Eyeballs fallback,
+    /// may still be attempted and each new socket invokes the callback. To deny
+    /// all connections, the callback must reject every candidate. Reused
+    /// connections do not invoke it again.
+    #[inline]
+    pub fn set_socket_initializer<F>(&mut self, initializer: F)
+    where
+        F: Fn(&std::net::TcpStream, SocketAddr) -> io::Result<()> + Send + Sync + 'static,
+    {
+        self.config_mut().socket_initializer = Some(Arc::new(initializer));
     }
 
     /// Sets the value of the SO_SNDBUF option on the socket.
@@ -576,10 +605,6 @@ where
 
         let sock = c.connect().await?;
 
-        if let Err(e) = sock.set_nodelay(config.nodelay) {
-            warn!("tcp set_nodelay error: {}", e);
-        }
-
         Ok(TokioIo::new(sock))
     }
 }
@@ -784,7 +809,7 @@ impl ConnectingTcpRemote {
         let mut err = None;
         for addr in &mut self.addrs {
             debug!("connecting to {}", addr);
-            match connect(&addr, config, self.connect_timeout)?.await {
+            match async { connect(&addr, config, self.connect_timeout)?.await }.await {
                 Ok(tcp) => {
                     debug!("connected to {}", addr);
                     return Ok(tcp);
@@ -932,6 +957,36 @@ fn connect(
         }
     }
 
+    if config.reuse_address {
+        if let Err(e) = socket.set_reuse_address(true) {
+            warn!("tcp set_reuse_address error: {}", e);
+        }
+    }
+
+    if let Some(size) = config.send_buffer_size {
+        if let Err(e) = socket.set_send_buffer_size(size.min(u32::MAX as usize)) {
+            warn!("tcp set_buffer_size error: {}", e);
+        }
+    }
+
+    if let Some(size) = config.recv_buffer_size {
+        if let Err(e) = socket.set_recv_buffer_size(size.min(u32::MAX as usize)) {
+            warn!("tcp set_recv_buffer_size error: {}", e);
+        }
+    }
+
+    if let Err(e) = socket.set_tcp_nodelay(config.nodelay) {
+        warn!("tcp set_nodelay error: {}", e);
+    }
+
+    let socket = if let Some(initialize) = &config.socket_initializer {
+        let stream = socket.into();
+        initialize(&stream, *addr).map_err(ConnectError::m("tcp socket initializer error"))?;
+        Socket::from(stream)
+    } else {
+        socket
+    };
+
     bind_local_address(
         &socket,
         addr,
@@ -942,24 +997,6 @@ fn connect(
 
     // Convert the `Socket` to a Tokio `TcpSocket`.
     let socket = tokio::net::TcpSocket::from_std_stream(socket.into());
-
-    if config.reuse_address {
-        if let Err(e) = socket.set_reuseaddr(true) {
-            warn!("tcp set_reuse_address error: {}", e);
-        }
-    }
-
-    if let Some(size) = config.send_buffer_size {
-        if let Err(e) = socket.set_send_buffer_size(size.try_into().unwrap_or(u32::MAX)) {
-            warn!("tcp set_buffer_size error: {}", e);
-        }
-    }
-
-    if let Some(size) = config.recv_buffer_size {
-        if let Err(e) = socket.set_recv_buffer_size(size.try_into().unwrap_or(u32::MAX)) {
-            warn!("tcp set_recv_buffer_size error: {}", e);
-        }
-    }
 
     let connect = socket.connect(*addr);
     Ok(async move {
@@ -1039,6 +1076,133 @@ mod tests {
         C: Connect,
     {
         connector.connect(super::super::sealed::Internal, dst).await
+    }
+
+    #[tokio::test]
+    async fn socket_initializer_before_bind() {
+        use std::net::{Ipv4Addr, TcpListener};
+        use std::sync::{Arc, Mutex};
+
+        let server = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let destination = server.local_addr().unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let captured = calls.clone();
+        let mut connector = HttpConnector::new();
+        connector.set_local_address(Some(Ipv4Addr::LOCALHOST.into()));
+        connector.set_nodelay(false);
+        connector.enforce_http(false);
+        connector.set_socket_initializer(move |socket, addr| {
+            assert!(socket.peer_addr().is_err());
+            if let Ok(local) = socket.local_addr() {
+                assert_eq!(local.port(), 0);
+                assert!(local.ip().is_unspecified());
+            }
+            captured.lock().unwrap().push(addr);
+            socket.set_ttl(42)?;
+            socket.set_nodelay(true)
+        });
+        let stream = connect(connector, format!("https://{destination}").parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(*calls.lock().unwrap(), vec![destination]);
+        assert_eq!(stream.inner().ttl().unwrap(), 42);
+        assert!(stream.inner().nodelay().unwrap());
+        assert_eq!(
+            stream.inner().local_addr().unwrap().ip(),
+            Ipv4Addr::LOCALHOST
+        );
+        assert_ne!(stream.inner().local_addr().unwrap().port(), 0);
+        assert_eq!(
+            server.accept().unwrap().1,
+            stream.inner().local_addr().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn socket_initializer_denies_every_candidate() {
+        use std::io;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+
+        let servers: Vec<_> = ["127.0.0.1:0", "127.0.0.1:0", "[::1]:0", "[::1]:0"]
+            .into_iter()
+            .map(|addr| TcpListener::bind(addr).unwrap())
+            .collect();
+        let addresses: Vec<_> = servers.iter().map(|s| s.local_addr().unwrap()).collect();
+        for server in &servers {
+            server.set_nonblocking(true).unwrap();
+        }
+        for delay in [None, Some(Duration::ZERO)] {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let captured = calls.clone();
+            let mut connector = HttpConnector::new();
+            connector.set_happy_eyeballs_timeout(delay);
+            connector.set_socket_initializer(move |socket, addr| {
+                assert!(socket.peer_addr().is_err());
+                captured.lock().unwrap().push(addr);
+                Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"))
+            });
+            let err = super::ConnectingTcp::new(
+                super::dns::SocketAddrs::new(addresses.clone()),
+                &connector.config,
+            )
+            .connect()
+            .await
+            .unwrap_err();
+            let cause = std::error::Error::source(&err).unwrap();
+            assert_eq!(
+                cause.downcast_ref::<io::Error>().unwrap().kind(),
+                io::ErrorKind::PermissionDenied
+            );
+            assert_eq!(*calls.lock().unwrap(), addresses);
+            for server in &servers {
+                assert_eq!(
+                    server.accept().unwrap_err().kind(),
+                    io::ErrorKind::WouldBlock
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn socket_initializer_denial_allows_remaining_candidates() {
+        use std::io;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+
+        for allowed_bind in ["127.0.0.1:0", "[::1]:0"] {
+            let denied = TcpListener::bind("127.0.0.1:0").unwrap();
+            denied.set_nonblocking(true).unwrap();
+            let denied_addr = denied.local_addr().unwrap();
+            let allowed = TcpListener::bind(allowed_bind).unwrap();
+            let allowed_addr = allowed.local_addr().unwrap();
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let captured = calls.clone();
+            let mut connector = HttpConnector::new();
+            connector.set_socket_initializer(move |socket, addr| {
+                captured.lock().unwrap().push(addr);
+                if addr == denied_addr {
+                    Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"))
+                } else {
+                    socket.set_nodelay(true)
+                }
+            });
+            let stream = super::ConnectingTcp::new(
+                super::dns::SocketAddrs::new(vec![denied_addr, allowed_addr]),
+                &connector.config,
+            )
+            .connect()
+            .await
+            .unwrap();
+            assert_eq!(stream.peer_addr().unwrap(), allowed_addr);
+            assert!(stream.nodelay().unwrap());
+            assert_eq!(*calls.lock().unwrap(), vec![denied_addr, allowed_addr]);
+            assert_eq!(
+                denied.accept().unwrap_err().kind(),
+                io::ErrorKind::WouldBlock
+            );
+            assert_eq!(allowed.accept().unwrap().1, stream.local_addr().unwrap());
+        }
     }
 
     #[tokio::test]
