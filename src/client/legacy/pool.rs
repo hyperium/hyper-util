@@ -469,7 +469,14 @@ impl<T, K: Eq + Hash> PoolInner<T, K> {
     fn clean_waiters(&mut self, key: &K) {
         let mut remove_waiters = false;
         if let Some(waiters) = self.waiters.get_mut(key) {
-            waiters.retain(|tx| !tx.is_canceled());
+            // Dropping a `Checkout` leaves its parked sender in the queue as
+            // canceled. `put` already skips such canceled waiters lazily, so
+            // there is no need to rescan the whole queue on every drop:
+            // popping just the canceled prefix is amortized O(1), since each
+            // sender is popped at most once.
+            while waiters.front().is_some_and(|tx| tx.is_canceled()) {
+                waiters.pop_front();
+            }
             remove_waiters = waiters.is_empty();
         }
         if remove_waiters {
@@ -1084,6 +1091,57 @@ mod tests {
         assert_eq!(pool.locked().waiters.get(&key).unwrap().len(), 1);
 
         drop(checkout2);
+        assert!(!pool.locked().waiters.contains_key(&key));
+    }
+
+    #[tokio::test]
+    async fn test_pool_checkout_drop_cleans_up_waiters_many() {
+        // The reported O(n^2): dropping many parked checkouts must leave no
+        // waiter entries behind.
+        let pool = pool_no_timer::<Uniq<i32>, KeyImpl>();
+        let key = host_key("foo");
+
+        let mut checkouts = Vec::new();
+        for _ in 0..200 {
+            let mut checkout = pool.checkout(key.clone());
+            PollOnce(&mut checkout).await;
+            checkouts.push(checkout);
+        }
+        assert_eq!(pool.locked().waiters.get(&key).unwrap().len(), 200);
+
+        drop(checkouts);
+        assert!(!pool.locked().waiters.contains_key(&key));
+    }
+
+    #[tokio::test]
+    async fn test_pool_checkout_drop_out_of_order_then_put() {
+        // A canceled waiter in the middle of the queue must not break `put`:
+        // live waiters ahead of it are still woken, and the queue is fully
+        // cleaned once every checkout is dropped.
+        let pool = pool_no_timer::<Uniq<i32>, KeyImpl>();
+        let key = host_key("foo");
+
+        let mut checkout1 = pool.checkout(key.clone());
+        let mut checkout2 = pool.checkout(key.clone());
+        let mut checkout3 = pool.checkout(key.clone());
+
+        PollOnce(&mut checkout1).await;
+        PollOnce(&mut checkout2).await;
+        PollOnce(&mut checkout3).await;
+        assert_eq!(pool.locked().waiters.get(&key).unwrap().len(), 3);
+
+        // drop the middle waiter; its sender stays parked but canceled
+        drop(checkout2);
+
+        // putting a connection still wakes the live waiter at the front,
+        // skipping the canceled one
+        drop(pool.pooled(c(key.clone()), Uniq(7)));
+        match checkout1.await {
+            Ok(pooled) => assert_eq!(*pooled, Uniq(7)),
+            Err(_) => panic!("not ready"),
+        }
+
+        drop(checkout3);
         assert!(!pool.locked().waiters.contains_key(&key));
     }
 
