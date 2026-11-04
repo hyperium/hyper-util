@@ -13,7 +13,6 @@ use std::{
     marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
-    thread,
 };
 use tokio::{net::TcpListener, net::TcpStream};
 
@@ -32,7 +31,8 @@ async fn handle_request(_request: Request<Incoming>) -> Result<Response<Full<Byt
     Ok(response)
 }
 
-async fn upgradable_server() -> Result<(), Box<dyn Error + 'static>> {
+#[tokio::main(flavor = "local")]
+async fn main() -> Result<(), Box<dyn Error + 'static>> {
     let listen_addr = "127.0.0.1:8000";
     let tcp_listener = TcpListener::bind(listen_addr).await?;
     println!("listening on http://{listen_addr}");
@@ -62,22 +62,6 @@ async fn upgradable_server() -> Result<(), Box<dyn Error + 'static>> {
 
         tokio::task::spawn_local(serve_connection);
     }
-}
-
-fn main() {
-    let server = thread::spawn(move || {
-        // Configure a runtime for the server that runs everything on the current thread
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("build runtime");
-
-        // Combine it with a `LocalSet,  which means it can spawn !Send futures...
-        let local = tokio::task::LocalSet::new();
-        local.block_on(&rt, upgradable_server()).unwrap();
-    });
-
-    server.join().unwrap()
 }
 
 // NOTE: This part is only needed for HTTP/2. HTTP/1 doesn't need an executor.
