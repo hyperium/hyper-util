@@ -6,7 +6,10 @@ use bytes::Bytes;
 use http::{Request, Response, header::CONTENT_TYPE};
 use http_body_util::Full;
 use hyper::{body::Incoming, service::service_fn};
-use hyper_util::{rt::TokioIo, server::conn::auto::Builder};
+use hyper_util::{
+    rt::{TokioIo, tokio::TokioLocalExecutor},
+    server::conn::auto::Builder,
+};
 use std::{convert::Infallible, error::Error};
 use tokio::net::TcpListener;
 
@@ -43,7 +46,7 @@ async fn main() -> Result<(), Box<dyn Error + 'static>> {
         let serve_connection = async move {
             println!("handling a request from {addr}");
 
-            let result = Builder::new(LocalExec)
+            let result = Builder::new(TokioLocalExecutor::new())
                 .serve_connection(TokioIo::new(stream), service_fn(handle_request))
                 .await;
 
@@ -55,22 +58,5 @@ async fn main() -> Result<(), Box<dyn Error + 'static>> {
         };
 
         tokio::task::spawn_local(serve_connection);
-    }
-}
-
-// NOTE: This part is only needed for HTTP/2. HTTP/1 doesn't need an executor.
-//
-// Since the Server needs to spawn some background tasks, we needed
-// to configure an Executor that can spawn !Send futures...
-#[derive(Clone, Copy, Debug)]
-struct LocalExec;
-
-impl<F> hyper::rt::Executor<F> for LocalExec
-where
-    F: std::future::Future + 'static, // not requiring `Send`
-{
-    fn execute(&self, fut: F) {
-        // This will spawn into the currently running `LocalSet`.
-        tokio::task::spawn_local(fut);
     }
 }
