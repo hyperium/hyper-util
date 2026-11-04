@@ -1,6 +1,8 @@
 //! This example runs a server that responds to any request with "Hello, world!".
-//! Unlike it's server.rs counter part, it demonstrates using a !Send executor (i.e. gloomio,
-//! monoio).
+//!
+//! Unlike its `server.rs` counter part, this server runs on a local single-threaded runtime,
+//! and uses a `!Send` executor. This pattern is useful for running hyper servers on asynchronous
+//! runtimes like gloomio or monoio.
 
 use bytes::Bytes;
 use http::{Request, Response, header::CONTENT_TYPE};
