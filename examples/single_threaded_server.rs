@@ -7,14 +7,8 @@ use http::{Request, Response, header::CONTENT_TYPE};
 use http_body_util::Full;
 use hyper::{body::Incoming, service::service_fn};
 use hyper_util::{rt::TokioIo, server::conn::auto::Builder};
-use std::{
-    convert::Infallible,
-    error::Error,
-    marker::PhantomData,
-    pin::Pin,
-    task::{Context, Poll},
-};
-use tokio::{net::TcpListener, net::TcpStream};
+use std::{convert::Infallible, error::Error};
+use tokio::net::TcpListener;
 
 /// Function from an incoming request to an outgoing response
 ///
@@ -78,53 +72,5 @@ where
     fn execute(&self, fut: F) {
         // This will spawn into the currently running `LocalSet`.
         tokio::task::spawn_local(fut);
-    }
-}
-
-struct IOTypeNotSend {
-    _marker: PhantomData<*const ()>,
-    stream: TokioIo<TcpStream>,
-}
-
-impl IOTypeNotSend {
-    fn new(stream: TokioIo<TcpStream>) -> Self {
-        Self {
-            _marker: PhantomData,
-            stream,
-        }
-    }
-}
-
-impl hyper::rt::Write for IOTypeNotSend {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
-        Pin::new(&mut self.stream).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.stream).poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.stream).poll_shutdown(cx)
-    }
-}
-
-impl hyper::rt::Read for IOTypeNotSend {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: hyper::rt::ReadBufCursor<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.stream).poll_read(cx, buf)
     }
 }
