@@ -2,22 +2,20 @@
 //! Unlike it's server.rs counter part, it demonstrates using a !Send executor (i.e. gloomio,
 //! monoio).
 
-use std::{convert::Infallible, error::Error};
-
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::thread;
-
 use bytes::Bytes;
-use http::{header::CONTENT_TYPE, Request, Response};
-use http_body_util::{combinators::BoxBody, BodyExt, Full};
+use http::{Request, Response, header::CONTENT_TYPE};
+use http_body_util::Full;
 use hyper::{body::Incoming, service::service_fn};
-use hyper_util::{
-    rt::{TokioExecutor, TokioIo},
-    server::conn::auto::Builder,
+use hyper_util::{rt::TokioIo, server::conn::auto::Builder};
+use std::{
+    convert::Infallible,
+    error::Error,
+    marker::PhantomData,
+    pin::Pin,
+    task::{Context, Poll},
+    thread,
 };
-use tokio::{net::TcpListener, net::TcpStream, task::JoinSet};
+use tokio::{net::TcpListener, net::TcpStream};
 
 /// Function from an incoming request to an outgoing response
 ///
