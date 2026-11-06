@@ -7,6 +7,8 @@ pub mod legacy;
 #[cfg(feature = "client-pool")]
 pub mod pool;
 
+pub mod service;
+
 #[cfg(feature = "client-proxy")]
 pub mod proxy;
 
