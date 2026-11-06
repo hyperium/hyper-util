@@ -212,14 +212,28 @@ impl SocketAddrs {
         SocketAddrs::new(self.iter.filter(predicate).collect())
     }
 
+    pub(super) fn filter_by_local_address(
+        self,
+        local_addr_ipv4: Option<Ipv4Addr>,
+        local_addr_ipv6: Option<Ipv6Addr>,
+    ) -> SocketAddrs {
+        match (local_addr_ipv4, local_addr_ipv6) {
+            (Some(_), None) => self.filter(SocketAddr::is_ipv4),
+            (None, Some(_)) => self.filter(SocketAddr::is_ipv6),
+            _ => self,
+        }
+    }
+
     pub(super) fn split_by_preference(
         self,
         local_addr_ipv4: Option<Ipv4Addr>,
         local_addr_ipv6: Option<Ipv6Addr>,
     ) -> (SocketAddrs, SocketAddrs) {
         match (local_addr_ipv4, local_addr_ipv6) {
-            (Some(_), None) => (self.filter(SocketAddr::is_ipv4), SocketAddrs::new(vec![])),
-            (None, Some(_)) => (self.filter(SocketAddr::is_ipv6), SocketAddrs::new(vec![])),
+            (Some(_), None) | (None, Some(_)) => (
+                self.filter_by_local_address(local_addr_ipv4, local_addr_ipv6),
+                SocketAddrs::new(vec![]),
+            ),
             _ => {
                 let preferring_v6 = self
                     .iter
