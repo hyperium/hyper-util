@@ -13,6 +13,14 @@
 //! its `Response` is some type implementing [`Read`][], [`Write`][],
 //! and [`Connection`][].
 //!
+//! When used with the legacy [`Client`][], the destination passed to the
+//! connector is *not* the full request `Uri`. Connections are pooled and
+//! reused per scheme and authority, so the `Client` only passes those parts:
+//! the path is always `/` and the query is removed. For example, a request to
+//! `https://example.com:8443/api/users?id=1` makes the connector receive
+//! `https://example.com:8443/`. Connectors should not rely on the request's
+//! path or query.
+//!
 //! ## Custom Connectors
 //!
 //! A simple connector that ignores the `Uri` destination and always returns
@@ -63,6 +71,7 @@
 //! [`Read`]: hyper::rt::Read
 //! [`Write`]: hyper::rt::Write
 //! [`Connection`]: Connection
+//! [`Client`]: crate::client::legacy::Client
 use std::{
     fmt::{self, Formatter},
     sync::{
