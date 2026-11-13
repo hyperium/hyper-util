@@ -68,6 +68,7 @@ struct Config {
     connect_timeout: Option<Duration>,
     enforce_http: bool,
     happy_eyeballs_timeout: Option<Duration>,
+    linger: Option<Duration>,
     tcp_keepalive_config: TcpKeepaliveConfig,
     local_address_ipv4: Option<Ipv4Addr>,
     local_address_ipv6: Option<Ipv6Addr>,
@@ -226,6 +227,7 @@ impl<R> HttpConnector<R> {
                 connect_timeout: None,
                 enforce_http: true,
                 happy_eyeballs_timeout: Some(Duration::from_millis(300)),
+                linger: None,
                 tcp_keepalive_config: TcpKeepaliveConfig::default(),
                 local_address_ipv4: None,
                 local_address_ipv6: None,
@@ -285,6 +287,22 @@ impl<R> HttpConnector<R> {
     #[inline]
     pub fn set_keepalive_retries(&mut self, retries: Option<u32>) {
         self.config_mut().tcp_keepalive_config.retries = retries;
+    }
+
+    /// Sets the `SO_LINGER` duration for TCP sockets.
+    ///
+    /// Default is `None`, leaving the socket's linger option unchanged.
+    ///
+    /// A zero duration enables abortive close: closing the socket discards
+    /// unsent data and resets the connection instead of closing it gracefully.
+    /// A nonzero duration may block socket closure while pending data is sent,
+    /// depending on the platform. This option does not close active connections.
+    ///
+    /// If the platform rejects the option, a warning is logged and the
+    /// connection attempt continues.
+    #[inline]
+    pub fn set_linger(&mut self, linger: Option<Duration>) {
+        self.config_mut().linger = linger;
     }
 
     /// Set that all sockets have `SO_NODELAY` set to the supplied value `nodelay`.
@@ -851,6 +869,12 @@ fn connect(
     let domain = Domain::for_address(*addr);
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
         .map_err(ConnectError::m("tcp open error"))?;
+
+    if let Some(linger) = config.linger {
+        if let Err(e) = socket.set_linger(Some(linger)) {
+            warn!("tcp set_linger error: {}", e);
+        }
+    }
 
     // When constructing a Tokio `TcpSocket` from a raw fd/socket, the user is
     // responsible for ensuring O_NONBLOCK is set.
