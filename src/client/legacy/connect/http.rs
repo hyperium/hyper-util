@@ -768,7 +768,13 @@ impl<'a> ConnectingTcp<'a> {
             }
         } else {
             ConnectingTcp {
-                preferred: ConnectingTcpRemote::new(remote_addrs, config.connect_timeout),
+                preferred: ConnectingTcpRemote::new(
+                    remote_addrs.filter_by_local_address(
+                        config.local_address_ipv4,
+                        config.local_address_ipv6,
+                    ),
+                    config.connect_timeout,
+                ),
                 fallback: None,
                 config,
             }
@@ -1154,6 +1160,26 @@ mod tests {
         if let Some(ip) = bind_ip_v6 {
             assert_client_ip(format!("http://[::1]:{port}"), server6, ip.into()).await;
         }
+    }
+
+    #[tokio::test]
+    async fn local_address_filters_incompatible_remote_addrs_without_happy_eyeballs() {
+        use std::net::TcpListener;
+
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+
+        let mut connector = HttpConnector::new();
+        connector.set_local_address(Some("::1".parse().unwrap()));
+        connector.set_happy_eyeballs_timeout(None);
+
+        let err = connect(
+            connector,
+            format!("http://127.0.0.1:{port}").parse().unwrap(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(&*err.msg, "tcp connect error");
     }
 
     // NOTE: pnet crate that we use in this test doesn't compile on Windows
