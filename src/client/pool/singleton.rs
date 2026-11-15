@@ -329,7 +329,11 @@ mod internal {
             match self.inner.poll_ready(cx) {
                 Poll::Ready(Err(err)) => {
                     if let Some(state) = self.state.upgrade() {
-                        *state.lock().unwrap() = State::Empty;
+                        let mut locked = state.lock().unwrap();
+                        // Another holder may have cleared it already and a new connect started.
+                        if matches!(*locked, State::Made(_)) {
+                            *locked = State::Empty;
+                        }
                     }
                     Poll::Ready(Err(err))
                 }
@@ -768,5 +772,73 @@ mod tests {
 
         fut1.await.unwrap();
         fut3.await.unwrap();
+    }
+
+    mod stale_singled {
+        use super::super::Singleton;
+        use std::future::Future;
+        use std::pin::Pin;
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::task::{Context, Poll};
+        use tower_service::Service;
+
+        #[derive(Clone)]
+        struct Conn(Arc<AtomicBool>);
+        impl Service<()> for Conn {
+            type Response = ();
+            type Error = std::io::Error;
+            type Future = std::future::Ready<Result<(), Self::Error>>;
+            fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                if self.0.load(Ordering::SeqCst) {
+                    Poll::Ready(Err(std::io::Error::other("dead")))
+                } else {
+                    Poll::Ready(Ok(()))
+                }
+            }
+            fn call(&mut self, _: ()) -> Self::Future {
+                std::future::ready(Ok(()))
+            }
+        }
+
+        type Rx = tokio::sync::oneshot::Receiver<Conn>;
+        struct Maker(Arc<Mutex<Vec<Rx>>>);
+        impl Service<()> for Maker {
+            type Response = Conn;
+            type Error = std::io::Error;
+            type Future = Pin<Box<dyn Future<Output = Result<Conn, std::io::Error>>>>;
+            fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                Poll::Ready(Ok(()))
+            }
+            fn call(&mut self, _: ()) -> Self::Future {
+                let rx = self.0.lock().unwrap().pop().unwrap();
+                Box::pin(async move { Ok(rx.await.unwrap()) })
+            }
+        }
+
+        #[tokio::test]
+        async fn stale_error_does_not_cancel_new_connect() {
+            let (tx_a, rx_a) = tokio::sync::oneshot::channel();
+            let (tx_b, rx_b) = tokio::sync::oneshot::channel();
+            let q = Arc::new(Mutex::new(vec![rx_b, rx_a]));
+            let mut s = Singleton::new(Maker(q));
+            let dead_a = Arc::new(AtomicBool::new(false));
+            tx_a.send(Conn(dead_a.clone())).ok();
+            let mut a1 = s.call(()).await.unwrap();
+            let mut a2 = s.call(()).await.unwrap();
+            dead_a.store(true, Ordering::SeqCst);
+            assert!(std::future::poll_fn(|cx| a1.poll_ready(cx)).await.is_err());
+            // a new connect starts while a2 still holds the dead service
+            let mut fut_b = Box::pin(s.call(()));
+            assert!(
+                std::future::poll_fn(|cx| Poll::Ready(fut_b.as_mut().poll(cx).is_pending())).await
+            );
+            assert!(std::future::poll_fn(|cx| a2.poll_ready(cx)).await.is_err());
+            tx_b.send(Conn(Arc::new(AtomicBool::new(false)))).ok();
+            fut_b.await.unwrap();
+            assert!(!s.is_empty());
+        }
     }
 }
