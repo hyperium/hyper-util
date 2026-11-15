@@ -158,6 +158,7 @@ where
 /// Baton-passing lets another participant take over, so cancellation remains
 /// local to the future that was dropped.
 mod internal {
+    use std::collections::BTreeMap;
     use std::fmt;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex, Weak};
@@ -204,10 +205,10 @@ mod internal {
         future: Option<Pin<Box<F>>>,
         next_id: WaiterId,
         driver: Option<Driver>,
-        waiters: Vec<Waiter<S>>,
+        waiters: BTreeMap<WaiterId, Waiter<S>>,
     }
 
-    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
     pub struct WaiterId(usize);
 
     struct Driver {
@@ -348,7 +349,7 @@ mod internal {
                 future: Some(Box::pin(future)),
                 next_id: WaiterId(0),
                 driver: None,
-                waiters: Vec::new(),
+                waiters: Default::default(),
             }
         }
 
@@ -365,22 +366,24 @@ mod internal {
             let id = self.next_id;
             self.next_id.0 += 1;
             let (tx, rx) = oneshot::channel();
-            self.waiters.push(Waiter {
+            self.waiters.insert(
                 id,
-                waker: None,
-                tx,
-            });
+                Waiter {
+                    id,
+                    waker: None,
+                    tx,
+                },
+            );
             (id, rx)
         }
 
         fn remove(&mut self, id: WaiterId) -> bool {
-            if let Some(pos) = self.waiters.iter().position(|waiter| waiter.id == id) {
-                self.waiters.swap_remove(pos);
+            if self.waiters.remove(&id).is_some() {
                 return false;
             }
 
             if self.driver.as_ref().is_some_and(|driver| driver.id == id) {
-                if let Some(waiter) = self.waiters.pop() {
+                if let Some((_, waiter)) = self.waiters.pop_last() {
                     let waker = waiter.waker;
                     self.driver = Some(Driver {
                         id: waiter.id,
@@ -435,13 +438,13 @@ mod internal {
         where
             S: Clone,
         {
-            for waiter in std::mem::take(&mut self.waiters) {
+            for (_, waiter) in std::mem::take(&mut self.waiters) {
                 let _ = waiter.tx.send(result.clone());
             }
         }
 
         fn store_waker(&mut self, id: WaiterId, waker: &Waker) {
-            if let Some(waiter) = self.waiters.iter_mut().find(|waiter| waiter.id == id) {
+            if let Some(waiter) = self.waiters.get_mut(&id) {
                 if waiter
                     .waker
                     .as_ref()
