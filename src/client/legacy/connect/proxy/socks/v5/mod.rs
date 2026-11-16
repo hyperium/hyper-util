@@ -260,7 +260,7 @@ where
         let connecting = self.inner.call(config.proxy.clone());
 
         let fut = async move {
-            let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
+            let port = super::super::dst_port(&dst);
             let host_from_uri = dst.host().ok_or(SocksError::MissingHost)?;
 
             // Note: host() returns the host part of the URI which could be a square bracketed IPv6

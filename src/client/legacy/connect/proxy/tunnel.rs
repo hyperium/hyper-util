@@ -142,7 +142,7 @@ where
                 tunnel(
                     conn,
                     dst.host().ok_or(TunnelError::MissingHost)?,
-                    dst.port().map(|p| p.as_u16()).unwrap_or(443),
+                    super::dst_port(&dst),
                     &headers,
                 )
                 .await
