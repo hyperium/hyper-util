@@ -112,11 +112,11 @@ mod internal {
         services: Vec<S>,
         waiters: VecDeque<Waiter>,
         reservations: Vec<(WaiterId, S)>,
-        next_waiter: usize,
+        next_waiter: u64,
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub struct WaiterId(usize);
+    pub struct WaiterId(u64);
 
     #[derive(Debug)]
     struct Waiter {
@@ -480,8 +480,13 @@ mod internal {
             id
         }
 
+        // Ids only grow (u64, no wrap) and are pushed to the back, so the queue is sorted.
+        fn waiter_index(&self, id: WaiterId) -> Option<usize> {
+            self.waiters.binary_search_by_key(&id.0, |w| w.id.0).ok()
+        }
+
         fn store_waker(&mut self, id: WaiterId, waker: &Waker) {
-            if let Some(waiter) = self.waiters.iter_mut().find(|waiter| waiter.id == id) {
+            if let Some(waiter) = self.waiter_index(id).map(|i| &mut self.waiters[i]) {
                 if waiter
                     .waker
                     .as_ref()
@@ -501,7 +506,7 @@ mod internal {
         }
 
         fn cancel_waiter(&mut self, id: WaiterId) {
-            if let Some(index) = self.waiters.iter().position(|waiter| waiter.id == id) {
+            if let Some(index) = self.waiter_index(id) {
                 self.waiters.remove(index);
                 return;
             }
