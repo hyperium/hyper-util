@@ -319,10 +319,16 @@ mod internal {
 
     impl<F, S> Drop for SingletonFuture<F, S> {
         fn drop(&mut self) {
-            if let SingletonFuture::Participating { id, state, .. } = self {
+            if let SingletonFuture::Participating {
+                id,
+                generation,
+                state,
+                ..
+            } = self
+            {
                 if let Ok(mut locked) = state.lock() {
                     if let State::Making(batch) = &mut *locked {
-                        if batch.remove(*id) {
+                        if batch.generation == *generation && batch.remove(*id) {
                             *locked = State::Empty;
                         }
                     }
@@ -743,6 +749,41 @@ mod tests {
         match waiter.poll() {
             Poll::Ready(Ok(_)) => {}
             other => panic!("expected promoted waiter to complete, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_participant_drop_does_not_touch_new_batch() {
+        let (mock_svc, mut handle) = tower_test::mock::pair::<(), &'static str>();
+        let mut singleton = Singleton::new(mock_svc);
+
+        handle.allow(2);
+        std::future::poll_fn(|cx| singleton.poll_ready(cx))
+            .await
+            .unwrap();
+        let fut1 = singleton.call(());
+        let stale = singleton.call(());
+        let ((), send_response) = handle.next_request().await.unwrap();
+        send_response.send_response("svc1");
+        fut1.await.unwrap();
+
+        singleton.retain(|_| false);
+        std::future::poll_fn(|cx| singleton.poll_ready(cx))
+            .await
+            .unwrap();
+        let driver = singleton.call(());
+        let waiter = singleton.call(());
+
+        drop(stale);
+        drop(driver);
+
+        let mut waiter = tokio_test::task::spawn(waiter);
+        assert!(waiter.poll().is_pending());
+        let ((), send_response) = handle.next_request().await.unwrap();
+        send_response.send_response("svc2");
+        match waiter.poll() {
+            Poll::Ready(Ok(_)) => {}
+            other => panic!("expected waiter to take over and complete, got {other:?}"),
         }
     }
 
