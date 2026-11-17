@@ -70,7 +70,7 @@ where
         match *locked {
             State::Empty => {}
             State::Making(..) => {}
-            State::Made(ref mut svc) => {
+            State::Made(ref mut svc, _) => {
                 if !predicate(svc) {
                     *locked = State::Empty;
                 }
@@ -114,9 +114,11 @@ where
                 let fut = self.mk_svc.call(dst);
                 let mut batch = internal::Batch::new(fut);
                 let id = batch.register_driver();
+                let generation = batch.generation;
                 *locked = State::Making(batch);
                 SingletonFuture::Participating {
                     id,
+                    generation,
                     state: self.state.clone(),
                     rx: None,
                 }
@@ -125,12 +127,14 @@ where
                 let (id, rx) = batch.register_waiter();
                 SingletonFuture::Participating {
                     id,
+                    generation: batch.generation,
                     state: self.state.clone(),
                     rx: Some(rx),
                 }
             }
-            State::Made(ref svc) => SingletonFuture::Made {
+            State::Made(ref svc, generation) => SingletonFuture::Made {
                 svc: Some(svc.clone()),
+                generation,
                 state: Arc::downgrade(&self.state),
             },
         }
@@ -160,6 +164,7 @@ where
 mod internal {
     use std::fmt;
     use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, Weak};
     use std::task::{self, Poll, Waker};
 
@@ -171,11 +176,13 @@ mod internal {
     pub enum SingletonFuture<F, S> {
         Participating {
             id: WaiterId,
+            generation: usize,
             state: Arc<Mutex<State<F, S>>>,
             rx: Option<oneshot::Receiver<Result<S, SharedError>>>,
         },
         Made {
             svc: Option<S>,
+            generation: usize,
             state: Weak<Mutex<State<F, S>>>,
         },
     }
@@ -186,7 +193,8 @@ mod internal {
     pub enum State<F, S> {
         Empty,
         Making(Batch<F, S>),
-        Made(S),
+        /// The made service, and the generation of the batch that made it.
+        Made(S, usize),
     }
 
     impl<F, S: fmt::Debug> fmt::Debug for State<F, S> {
@@ -194,13 +202,14 @@ mod internal {
             match self {
                 State::Empty => f.write_str("Empty"),
                 State::Making(..) => f.write_str("Making"),
-                State::Made(svc) => f.debug_tuple("Made").field(svc).finish(),
+                State::Made(svc, _) => f.debug_tuple("Made").field(svc).finish(),
             }
         }
     }
 
     // XXX: pub because of the enum SingletonFuture
     pub struct Batch<F, S> {
+        pub(super) generation: usize,
         future: Option<Pin<Box<F>>>,
         next_id: WaiterId,
         driver: Option<Driver>,
@@ -237,6 +246,7 @@ mod internal {
     #[derive(Debug)]
     pub struct Singled<F, S> {
         inner: S,
+        generation: usize,
         state: Weak<Mutex<State<F, S>>>,
     }
 
@@ -250,11 +260,20 @@ mod internal {
 
         fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
             match &mut *self {
-                SingletonFuture::Participating { id, state, rx } => {
+                SingletonFuture::Participating {
+                    id,
+                    generation,
+                    state,
+                    rx,
+                } => {
                     if let Some(receiver) = rx.as_mut() {
                         match Pin::new(receiver).poll(cx) {
                             Poll::Ready(Ok(Ok(svc))) => {
-                                return Poll::Ready(Ok(Singled::new(svc, Arc::downgrade(state))));
+                                return Poll::Ready(Ok(Singled::new(
+                                    svc,
+                                    *generation,
+                                    Arc::downgrade(state),
+                                )));
                             }
                             Poll::Ready(Ok(Err(err))) => {
                                 return Poll::Ready(Err(SingletonError(err)));
@@ -274,8 +293,8 @@ mod internal {
                             Poll::Pending => Poll::Pending,
                             Poll::Ready(Ok(svc)) => {
                                 batch.send_result(Ok(svc.clone()));
-                                *locked = State::Made(svc.clone());
-                                Poll::Ready(Ok(Singled::new(svc, state_weak)))
+                                *locked = State::Made(svc.clone(), *generation);
+                                Poll::Ready(Ok(Singled::new(svc, *generation, state_weak)))
                             }
                             Poll::Ready(Err(err)) => {
                                 batch.send_result(Err(err.clone()));
@@ -283,15 +302,23 @@ mod internal {
                                 Poll::Ready(Err(SingletonError(err)))
                             }
                         },
-                        State::Made(svc) => Poll::Ready(Ok(Singled::new(svc.clone(), state_weak))),
+                        State::Made(svc, made_gen) => {
+                            Poll::Ready(Ok(Singled::new(svc.clone(), *made_gen, state_weak)))
+                        }
                         State::Empty => {
                             unreachable!("singleton participant polled after making was canceled")
                         }
                     }
                 }
-                SingletonFuture::Made { svc, state } => {
-                    Poll::Ready(Ok(Singled::new(svc.take().unwrap(), state.clone())))
-                }
+                SingletonFuture::Made {
+                    svc,
+                    generation,
+                    state,
+                } => Poll::Ready(Ok(Singled::new(
+                    svc.take().unwrap(),
+                    *generation,
+                    state.clone(),
+                ))),
             }
         }
     }
@@ -311,8 +338,12 @@ mod internal {
     }
 
     impl<F, S> Singled<F, S> {
-        fn new(inner: S, state: Weak<Mutex<State<F, S>>>) -> Self {
-            Singled { inner, state }
+        fn new(inner: S, generation: usize, state: Weak<Mutex<State<F, S>>>) -> Self {
+            Singled {
+                inner,
+                generation,
+                state,
+            }
         }
     }
 
@@ -329,7 +360,12 @@ mod internal {
             match self.inner.poll_ready(cx) {
                 Poll::Ready(Err(err)) => {
                     if let Some(state) = self.state.upgrade() {
-                        *state.lock().unwrap() = State::Empty;
+                        let mut locked = state.lock().unwrap();
+                        // Only clear our own service; it may already be replaced by a newer one.
+                        if matches!(*locked, State::Made(_, generation) if generation == self.generation)
+                        {
+                            *locked = State::Empty;
+                        }
                     }
                     Poll::Ready(Err(err))
                 }
@@ -344,7 +380,10 @@ mod internal {
 
     impl<F, S> Batch<F, S> {
         pub(super) fn new(future: F) -> Self {
+            // Only compared for equality, so wrapping around is harmless.
+            static NEXT_GENERATION: AtomicUsize = AtomicUsize::new(0);
             Batch {
+                generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
                 future: Some(Box::pin(future)),
                 next_id: WaiterId(0),
                 driver: None,
@@ -768,5 +807,92 @@ mod tests {
 
         fut1.await.unwrap();
         fut3.await.unwrap();
+    }
+
+    mod stale_singled {
+        use super::super::Singleton;
+        use std::future::Future;
+        use std::pin::Pin;
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::task::{Context, Poll};
+        use tower_service::Service;
+
+        #[derive(Clone)]
+        struct Conn(Arc<AtomicBool>);
+        impl Service<()> for Conn {
+            type Response = ();
+            type Error = std::io::Error;
+            type Future = std::future::Ready<Result<(), Self::Error>>;
+            fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                if self.0.load(Ordering::SeqCst) {
+                    Poll::Ready(Err(std::io::Error::other("dead")))
+                } else {
+                    Poll::Ready(Ok(()))
+                }
+            }
+            fn call(&mut self, _: ()) -> Self::Future {
+                std::future::ready(Ok(()))
+            }
+        }
+
+        type Rx = tokio::sync::oneshot::Receiver<Conn>;
+        struct Maker(Arc<Mutex<Vec<Rx>>>);
+        impl Service<()> for Maker {
+            type Response = Conn;
+            type Error = std::io::Error;
+            type Future = Pin<Box<dyn Future<Output = Result<Conn, std::io::Error>>>>;
+            fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                Poll::Ready(Ok(()))
+            }
+            fn call(&mut self, _: ()) -> Self::Future {
+                let rx = self.0.lock().unwrap().pop().unwrap();
+                Box::pin(async move { Ok(rx.await.unwrap()) })
+            }
+        }
+
+        #[tokio::test]
+        async fn stale_error_does_not_cancel_new_connect() {
+            let (tx_a, rx_a) = tokio::sync::oneshot::channel();
+            let (tx_b, rx_b) = tokio::sync::oneshot::channel();
+            let q = Arc::new(Mutex::new(vec![rx_b, rx_a]));
+            let mut s = Singleton::new(Maker(q));
+            let dead_a = Arc::new(AtomicBool::new(false));
+            tx_a.send(Conn(dead_a.clone())).ok();
+            let mut a1 = s.call(()).await.unwrap();
+            let mut a2 = s.call(()).await.unwrap();
+            dead_a.store(true, Ordering::SeqCst);
+            assert!(std::future::poll_fn(|cx| a1.poll_ready(cx)).await.is_err());
+            // a new connect starts while a2 still holds the dead service
+            let mut fut_b = Box::pin(s.call(()));
+            assert!(
+                std::future::poll_fn(|cx| Poll::Ready(fut_b.as_mut().poll(cx).is_pending())).await
+            );
+            assert!(std::future::poll_fn(|cx| a2.poll_ready(cx)).await.is_err());
+            tx_b.send(Conn(Arc::new(AtomicBool::new(false)))).ok();
+            fut_b.await.unwrap();
+            assert!(!s.is_empty());
+        }
+
+        #[tokio::test]
+        async fn stale_error_does_not_clear_new_service() {
+            let (tx_a, rx_a) = tokio::sync::oneshot::channel();
+            let (tx_b, rx_b) = tokio::sync::oneshot::channel();
+            let q = Arc::new(Mutex::new(vec![rx_b, rx_a]));
+            let mut s = Singleton::new(Maker(q));
+            let dead_a = Arc::new(AtomicBool::new(false));
+            tx_a.send(Conn(dead_a.clone())).ok();
+            let mut a1 = s.call(()).await.unwrap();
+            let mut a2 = s.call(()).await.unwrap();
+            dead_a.store(true, Ordering::SeqCst);
+            assert!(std::future::poll_fn(|cx| a1.poll_ready(cx)).await.is_err());
+            tx_b.send(Conn(Arc::new(AtomicBool::new(false)))).ok();
+            s.call(()).await.unwrap();
+            // a2 still holds the dead service, B is healthy and must stay cached
+            assert!(std::future::poll_fn(|cx| a2.poll_ready(cx)).await.is_err());
+            assert!(!s.is_empty());
+        }
     }
 }
