@@ -158,12 +158,12 @@ where
 /// Baton-passing lets another participant take over, so cancellation remains
 /// local to the future that was dropped.
 mod internal {
-    use std::collections::BTreeMap;
     use std::fmt;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex, Weak};
     use std::task::{self, Poll, Waker};
 
+    use slab::Slab;
     use tokio::sync::oneshot;
     use tower_service::Service;
 
@@ -203,23 +203,16 @@ mod internal {
     // XXX: pub because of the enum SingletonFuture
     pub struct Batch<F, S> {
         future: Option<Pin<Box<F>>>,
-        next_id: WaiterId,
-        driver: Option<Driver>,
-        waiters: BTreeMap<WaiterId, Waiter<S>>,
+        driver: Option<WaiterId>,
+        participants: Slab<Participant<S>>,
     }
 
-    #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct WaiterId(usize);
 
-    struct Driver {
-        id: WaiterId,
+    struct Participant<S> {
         waker: Option<Waker>,
-    }
-
-    struct Waiter<S> {
-        id: WaiterId,
-        waker: Option<Waker>,
-        tx: oneshot::Sender<Result<S, SharedError>>,
+        tx: Option<oneshot::Sender<Result<S, SharedError>>>,
     }
 
     /// A cached service returned from a [`Singleton`].
@@ -347,58 +340,47 @@ mod internal {
         pub(super) fn new(future: F) -> Self {
             Batch {
                 future: Some(Box::pin(future)),
-                next_id: WaiterId(0),
                 driver: None,
-                waiters: Default::default(),
+                participants: Slab::new(),
             }
         }
 
         pub(super) fn register_driver(&mut self) -> WaiterId {
-            let id = self.next_id;
-            self.next_id.0 += 1;
-            self.driver = Some(Driver { id, waker: None });
+            let id = WaiterId(self.participants.insert(Participant {
+                waker: None,
+                tx: None,
+            }));
+            self.driver = Some(id);
             id
         }
 
         pub(super) fn register_waiter(
             &mut self,
         ) -> (WaiterId, oneshot::Receiver<Result<S, SharedError>>) {
-            let id = self.next_id;
-            self.next_id.0 += 1;
             let (tx, rx) = oneshot::channel();
-            self.waiters.insert(
-                id,
-                Waiter {
-                    id,
-                    waker: None,
-                    tx,
-                },
-            );
+            let id = WaiterId(self.participants.insert(Participant {
+                waker: None,
+                tx: Some(tx),
+            }));
             (id, rx)
         }
 
         fn remove(&mut self, id: WaiterId) -> bool {
-            if self.waiters.remove(&id).is_some() {
+            self.participants.try_remove(id.0);
+            if self.driver != Some(id) {
                 return false;
             }
 
-            if self.driver.as_ref().is_some_and(|driver| driver.id == id) {
-                if let Some((_, waiter)) = self.waiters.pop_last() {
-                    let waker = waiter.waker;
-                    self.driver = Some(Driver {
-                        id: waiter.id,
-                        waker,
-                    });
-                    self.wake_driver();
-                    return false;
-                }
-
-                self.driver = None;
-                self.future = None;
-                return true;
+            if let Some((key, next)) = self.participants.iter_mut().next() {
+                next.tx = None;
+                self.driver = Some(WaiterId(key));
+                self.wake_driver();
+                return false;
             }
 
-            false
+            self.driver = None;
+            self.future = None;
+            true
         }
 
         fn poll<E>(
@@ -411,7 +393,7 @@ mod internal {
             E: Into<BoxError>,
             S: Clone,
         {
-            if !self.driver.as_ref().is_some_and(|driver| driver.id == id) {
+            if self.driver != Some(id) {
                 self.store_waker(id, cx.waker());
                 return Poll::Pending;
             }
@@ -419,7 +401,7 @@ mod internal {
             let future = self.future.as_mut().expect("batch future missing");
             match future.as_mut().poll(cx) {
                 Poll::Pending => {
-                    self.store_driver_waker(cx.waker());
+                    self.store_waker(id, cx.waker());
                     Poll::Pending
                 }
                 Poll::Ready(Ok(svc)) => {
@@ -438,40 +420,29 @@ mod internal {
         where
             S: Clone,
         {
-            for (_, waiter) in std::mem::take(&mut self.waiters) {
-                let _ = waiter.tx.send(result.clone());
-            }
-        }
-
-        fn store_waker(&mut self, id: WaiterId, waker: &Waker) {
-            if let Some(waiter) = self.waiters.get_mut(&id) {
-                if waiter
-                    .waker
-                    .as_ref()
-                    .is_none_or(|current| !current.will_wake(waker))
-                {
-                    waiter.waker = Some(waker.clone());
+            for participant in self.participants.drain() {
+                if let Some(tx) = participant.tx {
+                    let _ = tx.send(result.clone());
                 }
             }
         }
 
-        fn store_driver_waker(&mut self, waker: &Waker) {
-            if let Some(driver) = &mut self.driver {
-                if driver
+        fn store_waker(&mut self, id: WaiterId, waker: &Waker) {
+            if let Some(participant) = self.participants.get_mut(id.0) {
+                if participant
                     .waker
                     .as_ref()
                     .is_none_or(|current| !current.will_wake(waker))
                 {
-                    driver.waker = Some(waker.clone());
+                    participant.waker = Some(waker.clone());
                 }
             }
         }
 
         fn wake_driver(&mut self) {
-            if let Some(driver) = &mut self.driver {
-                if let Some(waker) = driver.waker.take() {
-                    waker.wake();
-                }
+            let driver = self.driver.and_then(|id| self.participants.get_mut(id.0));
+            if let Some(waker) = driver.and_then(|driver| driver.waker.take()) {
+                waker.wake();
             }
         }
     }
