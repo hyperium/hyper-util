@@ -168,6 +168,7 @@ mod internal {
     use std::sync::{Arc, Mutex, Weak};
     use std::task::{self, Poll, Waker};
 
+    use slab::Slab;
     use tokio::sync::oneshot;
     use tower_service::Service;
 
@@ -211,23 +212,16 @@ mod internal {
     pub struct Batch<F, S> {
         pub(super) generation: usize,
         future: Option<Pin<Box<F>>>,
-        next_id: WaiterId,
-        driver: Option<Driver>,
-        waiters: Vec<Waiter<S>>,
+        driver: Option<WaiterId>,
+        participants: Slab<Participant<S>>,
     }
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct WaiterId(usize);
 
-    struct Driver {
-        id: WaiterId,
+    struct Participant<S> {
         waker: Option<Waker>,
-    }
-
-    struct Waiter<S> {
-        id: WaiterId,
-        waker: Option<Waker>,
-        tx: oneshot::Sender<Result<S, SharedError>>,
+        tx: Option<oneshot::Sender<Result<S, SharedError>>>,
     }
 
     /// A cached service returned from a [`Singleton`].
@@ -325,10 +319,16 @@ mod internal {
 
     impl<F, S> Drop for SingletonFuture<F, S> {
         fn drop(&mut self) {
-            if let SingletonFuture::Participating { id, state, .. } = self {
+            if let SingletonFuture::Participating {
+                id,
+                generation,
+                state,
+                ..
+            } = self
+            {
                 if let Ok(mut locked) = state.lock() {
                     if let State::Making(batch) = &mut *locked {
-                        if batch.remove(*id) {
+                        if batch.generation == *generation && batch.remove(*id) {
                             *locked = State::Empty;
                         }
                     }
@@ -385,56 +385,47 @@ mod internal {
             Batch {
                 generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
                 future: Some(Box::pin(future)),
-                next_id: WaiterId(0),
                 driver: None,
-                waiters: Vec::new(),
+                participants: Slab::new(),
             }
         }
 
         pub(super) fn register_driver(&mut self) -> WaiterId {
-            let id = self.next_id;
-            self.next_id.0 += 1;
-            self.driver = Some(Driver { id, waker: None });
+            let id = WaiterId(self.participants.insert(Participant {
+                waker: None,
+                tx: None,
+            }));
+            self.driver = Some(id);
             id
         }
 
         pub(super) fn register_waiter(
             &mut self,
         ) -> (WaiterId, oneshot::Receiver<Result<S, SharedError>>) {
-            let id = self.next_id;
-            self.next_id.0 += 1;
             let (tx, rx) = oneshot::channel();
-            self.waiters.push(Waiter {
-                id,
+            let id = WaiterId(self.participants.insert(Participant {
                 waker: None,
-                tx,
-            });
+                tx: Some(tx),
+            }));
             (id, rx)
         }
 
         fn remove(&mut self, id: WaiterId) -> bool {
-            if let Some(pos) = self.waiters.iter().position(|waiter| waiter.id == id) {
-                self.waiters.swap_remove(pos);
+            self.participants.try_remove(id.0);
+            if self.driver != Some(id) {
                 return false;
             }
 
-            if self.driver.as_ref().is_some_and(|driver| driver.id == id) {
-                if let Some(waiter) = self.waiters.pop() {
-                    let waker = waiter.waker;
-                    self.driver = Some(Driver {
-                        id: waiter.id,
-                        waker,
-                    });
-                    self.wake_driver();
-                    return false;
-                }
-
-                self.driver = None;
-                self.future = None;
-                return true;
+            if let Some((key, next)) = self.participants.iter_mut().next() {
+                next.tx = None;
+                self.driver = Some(WaiterId(key));
+                self.wake_driver();
+                return false;
             }
 
-            false
+            self.driver = None;
+            self.future = None;
+            true
         }
 
         fn poll<E>(
@@ -447,7 +438,7 @@ mod internal {
             E: Into<BoxError>,
             S: Clone,
         {
-            if !self.driver.as_ref().is_some_and(|driver| driver.id == id) {
+            if self.driver != Some(id) {
                 self.store_waker(id, cx.waker());
                 return Poll::Pending;
             }
@@ -455,7 +446,7 @@ mod internal {
             let future = self.future.as_mut().expect("batch future missing");
             match future.as_mut().poll(cx) {
                 Poll::Pending => {
-                    self.store_driver_waker(cx.waker());
+                    self.store_waker(id, cx.waker());
                     Poll::Pending
                 }
                 Poll::Ready(Ok(svc)) => {
@@ -474,40 +465,29 @@ mod internal {
         where
             S: Clone,
         {
-            for waiter in std::mem::take(&mut self.waiters) {
-                let _ = waiter.tx.send(result.clone());
-            }
-        }
-
-        fn store_waker(&mut self, id: WaiterId, waker: &Waker) {
-            if let Some(waiter) = self.waiters.iter_mut().find(|waiter| waiter.id == id) {
-                if waiter
-                    .waker
-                    .as_ref()
-                    .is_none_or(|current| !current.will_wake(waker))
-                {
-                    waiter.waker = Some(waker.clone());
+            for participant in self.participants.drain() {
+                if let Some(tx) = participant.tx {
+                    let _ = tx.send(result.clone());
                 }
             }
         }
 
-        fn store_driver_waker(&mut self, waker: &Waker) {
-            if let Some(driver) = &mut self.driver {
-                if driver
+        fn store_waker(&mut self, id: WaiterId, waker: &Waker) {
+            if let Some(participant) = self.participants.get_mut(id.0) {
+                if participant
                     .waker
                     .as_ref()
                     .is_none_or(|current| !current.will_wake(waker))
                 {
-                    driver.waker = Some(waker.clone());
+                    participant.waker = Some(waker.clone());
                 }
             }
         }
 
         fn wake_driver(&mut self) {
-            if let Some(driver) = &mut self.driver {
-                if let Some(waker) = driver.waker.take() {
-                    waker.wake();
-                }
+            let driver = self.driver.and_then(|id| self.participants.get_mut(id.0));
+            if let Some(waker) = driver.and_then(|driver| driver.waker.take()) {
+                waker.wake();
             }
         }
     }
@@ -769,6 +749,41 @@ mod tests {
         match waiter.poll() {
             Poll::Ready(Ok(_)) => {}
             other => panic!("expected promoted waiter to complete, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_participant_drop_does_not_touch_new_batch() {
+        let (mock_svc, mut handle) = tower_test::mock::pair::<(), &'static str>();
+        let mut singleton = Singleton::new(mock_svc);
+
+        handle.allow(2);
+        std::future::poll_fn(|cx| singleton.poll_ready(cx))
+            .await
+            .unwrap();
+        let fut1 = singleton.call(());
+        let stale = singleton.call(());
+        let ((), send_response) = handle.next_request().await.unwrap();
+        send_response.send_response("svc1");
+        fut1.await.unwrap();
+
+        singleton.retain(|_| false);
+        std::future::poll_fn(|cx| singleton.poll_ready(cx))
+            .await
+            .unwrap();
+        let driver = singleton.call(());
+        let waiter = singleton.call(());
+
+        drop(stale);
+        drop(driver);
+
+        let mut waiter = tokio_test::task::spawn(waiter);
+        assert!(waiter.poll().is_pending());
+        let ((), send_response) = handle.next_request().await.unwrap();
+        send_response.send_response("svc2");
+        match waiter.poll() {
+            Poll::Ready(Ok(_)) => {}
+            other => panic!("expected waiter to take over and complete, got {other:?}"),
         }
     }
 

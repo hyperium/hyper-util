@@ -36,6 +36,7 @@ tokio = { version = "1.49", optional = true, default-features = false  }
 tower-layer = { version = "0.3", optional = true }
 tower-service = { version = "0.3", optional = true }
 sync_wrapper = { version = "1", optional = true }
+slab = { version = "0.4.4", optional = true }
 
 [dev-dependencies]
 hyper = { version = "1.4.0", features = ["full"] }
@@ -82,7 +83,7 @@ full = [
 client = ["hyper/client", "dep:tracing", "dep:futures-channel", "dep:tower-service"]
 client-legacy = ["client", "tokio/sync", "dep:futures-util", "dep:httparse", "dep:sync_wrapper"]
 client-legacy-http-connector = ["dep:libc", "dep:socket2", "tokio/net"]
-client-pool = ["client", "dep:futures-util", "dep:tower-layer", "tokio/sync"]
+client-pool = ["client", "dep:futures-util", "dep:slab", "dep:tower-layer", "tokio/sync"]
 client-proxy = ["client", "dep:base64", "dep:ipnet", "dep:percent-encoding"]
 client-proxy-system = ["dep:system-configuration", "dep:windows-registry"]
 
