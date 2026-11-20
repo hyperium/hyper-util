@@ -93,6 +93,10 @@ struct PoolInner<T, K: Eq + Hash> {
     // them that the Conn could be used instead of waiting for a brand new
     // connection.
     waiters: HashMap<K, VecDeque<oneshot::Sender<T>>>,
+    // Drops that left a canceled sender parked behind a live waiter in
+    // `waiters[key]`, per key. Bounds how many canceled senders can pile
+    // up before `clean_waiters` rescans the queue: see that function.
+    stale_waiters: HashMap<K, usize>,
     // A oneshot channel is used to allow the interval to be notified when
     // the Pool completely drops. That way, the interval can cancel immediately.
     idle_interval_ref: Option<oneshot::Sender<Infallible>>,
@@ -132,6 +136,7 @@ impl<T, K: Key> Pool<T, K> {
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::new(),
+                stale_waiters: HashMap::new(),
                 exec,
                 timer,
                 timeout: config.idle_timeout,
@@ -385,6 +390,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         }
         if remove_waiters {
             self.waiters.remove(&key);
+            self.stale_waiters.remove(&key);
         }
 
         match value {
@@ -420,6 +426,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         // this Connecting task didn't complete successfully.
         // those waiters would never receive a connection.
         self.waiters.remove(key);
+        self.stale_waiters.remove(key);
     }
 
     fn spawn_idle_interval(&mut self, pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
@@ -461,7 +468,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
     }
 }
 
-impl<T, K: Eq + Hash> PoolInner<T, K> {
+impl<T, K: Eq + Hash + Clone> PoolInner<T, K> {
     /// Any `FutureResponse`s that were created will have made a `Checkout`,
     /// and possibly inserted into the pool that it is waiting for an idle
     /// connection. If a user ever dropped that future, we need to clean out
@@ -469,11 +476,36 @@ impl<T, K: Eq + Hash> PoolInner<T, K> {
     fn clean_waiters(&mut self, key: &K) {
         let mut remove_waiters = false;
         if let Some(waiters) = self.waiters.get_mut(key) {
-            waiters.retain(|tx| !tx.is_canceled());
+            // Dropping a `Checkout` leaves its parked sender in the queue as
+            // canceled. `put` already skips such canceled waiters lazily, so
+            // there is no need to rescan the whole queue on every drop:
+            // popping just the canceled prefix is amortized O(1), since each
+            // sender is popped at most once.
+            let mut popped = 0;
+            while waiters.front().is_some_and(|tx| tx.is_canceled()) {
+                waiters.pop_front();
+                popped += 1;
+            }
+            if popped == 0 && !waiters.is_empty() {
+                // The front waiter is live, so the just-dropped checkout is
+                // still parked behind it as a canceled sender. Count it: once
+                // such stale senders reach half the queue, rescan the whole
+                // queue, so canceled senders can never pile up without
+                // bound behind a long-lived live waiter. The rescan stays
+                // amortized O(1): it only runs after at least `len / 2`
+                // drops left a stale sender behind.
+                let stale = self.stale_waiters.entry(key.clone()).or_default();
+                *stale += 1;
+                if *stale * 2 >= waiters.len() {
+                    waiters.retain(|tx| !tx.is_canceled());
+                    *stale = 0;
+                }
+            }
             remove_waiters = waiters.is_empty();
         }
         if remove_waiters {
             self.waiters.remove(key);
+            self.stale_waiters.remove(key);
         }
     }
 }
@@ -1085,6 +1117,99 @@ mod tests {
 
         drop(checkout2);
         assert!(!pool.locked().waiters.contains_key(&key));
+    }
+
+    #[tokio::test]
+    async fn test_pool_checkout_drop_cleans_up_waiters_many() {
+        // The reported O(n^2): dropping many parked checkouts must leave no
+        // waiter entries behind.
+        let pool = pool_no_timer::<Uniq<i32>, KeyImpl>();
+        let key = host_key("foo");
+
+        let mut checkouts = Vec::new();
+        for _ in 0..200 {
+            let mut checkout = pool.checkout(key.clone());
+            PollOnce(&mut checkout).await;
+            checkouts.push(checkout);
+        }
+        assert_eq!(pool.locked().waiters.get(&key).unwrap().len(), 200);
+
+        drop(checkouts);
+        assert!(!pool.locked().waiters.contains_key(&key));
+    }
+
+    #[tokio::test]
+    async fn test_pool_checkout_drop_out_of_order_then_put() {
+        // A canceled waiter in the middle of the queue must not break `put`:
+        // live waiters ahead of it are still woken, and the queue is fully
+        // cleaned once every checkout is dropped.
+        let pool = pool_no_timer::<Uniq<i32>, KeyImpl>();
+        let key = host_key("foo");
+
+        let mut checkout1 = pool.checkout(key.clone());
+        let mut checkout2 = pool.checkout(key.clone());
+        let mut checkout3 = pool.checkout(key.clone());
+
+        PollOnce(&mut checkout1).await;
+        PollOnce(&mut checkout2).await;
+        PollOnce(&mut checkout3).await;
+        assert_eq!(pool.locked().waiters.get(&key).unwrap().len(), 3);
+
+        // drop the middle waiter; its sender stays parked but canceled
+        drop(checkout2);
+
+        // putting a connection still wakes the live waiter at the front,
+        // skipping the canceled one
+        drop(pool.pooled(c(key.clone()), Uniq(7)));
+        match checkout1.await {
+            Ok(pooled) => assert_eq!(*pooled, Uniq(7)),
+            Err(_) => panic!("not ready"),
+        }
+
+        drop(checkout3);
+        assert!(!pool.locked().waiters.contains_key(&key));
+    }
+
+    #[tokio::test]
+    async fn test_pool_checkout_drop_bounds_stale_waiters() {
+        // Canceled waiters parked behind live ones must not pile up without
+        // bound: once they reach half the queue, the next drop rescans and
+        // clears them, while live waiters stay parked.
+        let pool = pool_no_timer::<Uniq<i32>, KeyImpl>();
+        let key = host_key("foo");
+
+        let mut live = Vec::new();
+        for _ in 0..10 {
+            let mut checkout = pool.checkout(key.clone());
+            PollOnce(&mut checkout).await;
+            live.push(checkout);
+        }
+        assert_eq!(pool.locked().waiters.get(&key).unwrap().len(), 10);
+
+        for _ in 0..5 {
+            let mut checkout = pool.checkout(key.clone());
+            PollOnce(&mut checkout).await;
+            drop(checkout);
+        }
+        // Not yet half the queue, so the stale senders are still parked:
+        // dropping stays lazy and cheap.
+        assert_eq!(pool.locked().waiters.get(&key).unwrap().len(), 15);
+
+        for _ in 0..15 {
+            let mut checkout = pool.checkout(key.clone());
+            PollOnce(&mut checkout).await;
+            drop(checkout);
+        }
+        // The rescan fired once the stale senders reached half the queue,
+        // so only the 10 live waiters remain.
+        assert_eq!(pool.locked().waiters.get(&key).unwrap().len(), 10);
+
+        // And the live waiters still get their connection.
+        drop(pool.pooled(c(key.clone()), Uniq(7)));
+        match live.remove(0).await {
+            Ok(pooled) => assert_eq!(*pooled, Uniq(7)),
+            Err(_) => panic!("not ready"),
+        }
     }
 
     #[derive(Debug)]
