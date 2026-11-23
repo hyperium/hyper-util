@@ -3,7 +3,7 @@ mod socks;
 mod tunnel;
 
 pub use self::socks::{SocksV4, SocksV5};
-pub use self::tunnel::Tunnel;
+pub use self::tunnel::{Tunnel, TunnelError};
 
 /// The port to ask the proxy for, defaulting by scheme like `HttpConnector`.
 fn dst_port(dst: &http::Uri) -> u16 {

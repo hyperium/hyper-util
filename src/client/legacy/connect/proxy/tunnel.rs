@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{self, Poll, ready};
 
-use http::{HeaderMap, HeaderValue, Uri};
+use http::{HeaderMap, HeaderValue, StatusCode, Uri, header::PROXY_AUTHENTICATE};
 use hyper::rt::{Read, Write};
 use pin_project_lite::pin_project;
 use tower_service::Service;
@@ -27,15 +27,25 @@ enum Headers {
     Extra(HeaderMap),
 }
 
+/// An error from establishing a [`Tunnel`].
 #[derive(Debug)]
-pub enum TunnelError {
+pub struct TunnelError {
+    kind: Kind,
+}
+
+#[derive(Debug)]
+enum Kind {
     ConnectFailed(Box<dyn StdError + Send + Sync>),
     Io(std::io::Error),
     MissingHost,
-    ProxyAuthRequired,
+    ProxyAuthRequired {
+        proxy_authenticate: Vec<HeaderValue>,
+    },
     ProxyHeadersTooLong,
     TunnelUnexpectedEof,
-    TunnelUnsuccessful,
+    TunnelUnsuccessful {
+        status: Option<StatusCode>,
+    },
 }
 
 pin_project! {
@@ -126,7 +136,7 @@ where
     type Future = Tunneling<C::Future, C::Response>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        ready!(self.inner.poll_ready(cx)).map_err(|e| TunnelError::ConnectFailed(e.into()))?;
+        ready!(self.inner.poll_ready(cx)).map_err(|e| Kind::ConnectFailed(e.into()))?;
         Poll::Ready(Ok(()))
     }
 
@@ -138,10 +148,10 @@ where
             fut: Box::pin(async move {
                 let conn = connecting
                     .await
-                    .map_err(|e| TunnelError::ConnectFailed(e.into()))?;
+                    .map_err(|e| Kind::ConnectFailed(e.into()))?;
                 tunnel(
                     conn,
-                    dst.host().ok_or(TunnelError::MissingHost)?,
+                    dst.host().ok_or(Kind::MissingHost)?,
                     super::dst_port(&dst),
                     &headers,
                 )
@@ -197,7 +207,7 @@ where
 
     crate::rt::write_all(&mut conn, &buf)
         .await
-        .map_err(TunnelError::Io)?;
+        .map_err(Kind::Io)?;
 
     let mut buf = [0; 8192];
     let mut pos = 0;
@@ -205,10 +215,10 @@ where
     loop {
         let n = crate::rt::read(&mut conn, &mut buf[pos..])
             .await
-            .map_err(TunnelError::Io)?;
+            .map_err(Kind::Io)?;
 
         if n == 0 {
-            return Err(TunnelError::TunnelUnexpectedEof);
+            return Err(Kind::TunnelUnexpectedEof.into());
         }
         pos += n;
 
@@ -217,42 +227,85 @@ where
         match res.parse(&buf[..pos]) {
             Ok(httparse::Status::Complete(_)) => match res.code {
                 Some(200) => return Ok(conn),
-                Some(407) => return Err(TunnelError::ProxyAuthRequired),
-                _ => return Err(TunnelError::TunnelUnsuccessful),
+                Some(407) => {
+                    let proxy_authenticate = res
+                        .headers
+                        .iter()
+                        .filter(|h| h.name.eq_ignore_ascii_case(PROXY_AUTHENTICATE.as_str()))
+                        .filter_map(|h| HeaderValue::from_bytes(h.value).ok())
+                        .collect();
+                    return Err(Kind::ProxyAuthRequired { proxy_authenticate }.into());
+                }
+                code => {
+                    let status = code.and_then(|code| StatusCode::from_u16(code).ok());
+                    return Err(Kind::TunnelUnsuccessful { status }.into());
+                }
             },
             Ok(httparse::Status::Partial) => {
                 if pos == buf.len() {
-                    return Err(TunnelError::ProxyHeadersTooLong);
+                    return Err(Kind::ProxyHeadersTooLong.into());
                 }
             }
-            Err(_) => return Err(TunnelError::TunnelUnsuccessful),
+            Err(_) => return Err(Kind::TunnelUnsuccessful { status: None }.into()),
         }
     }
 }
 
 const MAX_HEADERS: usize = 100;
 
+impl TunnelError {
+    /// Returns the status of the proxy's response to the `CONNECT`, if the
+    /// proxy refused it.
+    ///
+    /// Returns `None` if the error did not come from a response with a valid
+    /// status code.
+    pub fn status(&self) -> Option<StatusCode> {
+        match self.kind {
+            Kind::ProxyAuthRequired { .. } => Some(StatusCode::PROXY_AUTHENTICATION_REQUIRED),
+            Kind::TunnelUnsuccessful { status } => status,
+            _ => None,
+        }
+    }
+
+    /// Returns the values of the `Proxy-Authenticate` headers of a
+    /// `407 Proxy Authentication Required` response.
+    ///
+    /// Returns an empty iterator for any other error.
+    pub fn proxy_authenticate(&self) -> impl Iterator<Item = &HeaderValue> {
+        match &self.kind {
+            Kind::ProxyAuthRequired { proxy_authenticate } => proxy_authenticate.iter(),
+            _ => [].iter(),
+        }
+    }
+}
+
+impl From<Kind> for TunnelError {
+    fn from(kind: Kind) -> Self {
+        TunnelError { kind }
+    }
+}
+
 impl std::fmt::Display for TunnelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("tunnel error: ")?;
 
-        f.write_str(match self {
-            TunnelError::MissingHost => "missing destination host",
-            TunnelError::ProxyAuthRequired => "proxy authorization required",
-            TunnelError::ProxyHeadersTooLong => "proxy response headers too long",
-            TunnelError::TunnelUnexpectedEof => "unexpected end of file",
-            TunnelError::TunnelUnsuccessful => "unsuccessful",
-            TunnelError::ConnectFailed(_) => "failed to create underlying connection",
-            TunnelError::Io(_) => "io error establishing tunnel",
+        f.write_str(match self.kind {
+            Kind::MissingHost => "missing destination host",
+            Kind::ProxyAuthRequired { .. } => "proxy authorization required",
+            Kind::ProxyHeadersTooLong => "proxy response headers too long",
+            Kind::TunnelUnexpectedEof => "unexpected end of file",
+            Kind::TunnelUnsuccessful { .. } => "unsuccessful",
+            Kind::ConnectFailed(_) => "failed to create underlying connection",
+            Kind::Io(_) => "io error establishing tunnel",
         })
     }
 }
 
 impl std::error::Error for TunnelError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            TunnelError::Io(e) => Some(e),
-            TunnelError::ConnectFailed(e) => Some(&**e),
+        match &self.kind {
+            Kind::Io(e) => Some(e),
+            Kind::ConnectFailed(e) => Some(&**e),
             _ => None,
         }
     }
@@ -262,6 +315,7 @@ impl std::error::Error for TunnelError {
 mod tests {
     use std::time::Duration;
 
+    use http::StatusCode;
     use tokio::io::AsyncWriteExt;
 
     use super::{Headers, TunnelError, tunnel};
@@ -298,23 +352,52 @@ mod tests {
 
     #[tokio::test]
     async fn proxy_auth_required() {
-        let err = handshake(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
-            .await
-            .unwrap_err();
-        assert!(matches!(err, TunnelError::ProxyAuthRequired));
+        let err = handshake(
+            b"HTTP/1.1 407 Proxy Authentication Required\r\n\
+              Proxy-Authenticate: Negotiate\r\n\
+              Proxy-Connection: close\r\n\
+              Proxy-Authenticate: Basic realm=\"proxy\"\r\n\r\n",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err.status(),
+            Some(StatusCode::PROXY_AUTHENTICATION_REQUIRED)
+        );
+        let challenges: Vec<_> = err.proxy_authenticate().collect();
+        assert_eq!(challenges, ["Negotiate", "Basic realm=\"proxy\""]);
+        assert_eq!(
+            err.to_string(),
+            "tunnel error: proxy authorization required"
+        );
     }
 
     #[tokio::test]
     async fn non_200_is_unsuccessful() {
-        let err = handshake(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
-            .await
-            .unwrap_err();
-        assert!(matches!(err, TunnelError::TunnelUnsuccessful));
+        for (response, expected) in [
+            (
+                &b"HTTP/1.1 403 Forbidden\r\n\r\n"[..],
+                StatusCode::FORBIDDEN,
+            ),
+            (b"HTTP/1.1 502 Bad Gateway\r\n\r\n", StatusCode::BAD_GATEWAY),
+        ] {
+            let err = handshake(response).await.unwrap_err();
+            assert_eq!(err.status(), Some(expected));
+            assert_eq!(err.to_string(), "tunnel error: unsuccessful");
+        }
     }
 
     #[tokio::test]
     async fn malformed_status_is_rejected() {
         let err = handshake(b"HTTP/1.1 2000 OK\r\n\r\n").await.unwrap_err();
-        assert!(matches!(err, TunnelError::TunnelUnsuccessful));
+        assert_eq!(err.status(), None);
+        assert_eq!(err.to_string(), "tunnel error: unsuccessful");
+    }
+
+    #[tokio::test]
+    async fn invalid_status_code_has_no_status() {
+        let err = handshake(b"HTTP/1.1 099 Odd\r\n\r\n").await.unwrap_err();
+        assert_eq!(err.status(), None);
+        assert_eq!(err.to_string(), "tunnel error: unsuccessful");
     }
 }
