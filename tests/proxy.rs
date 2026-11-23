@@ -5,7 +5,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tower_service::Service;
 
 use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::client::legacy::connect::proxy::{SocksV4, SocksV5, Tunnel};
+use hyper_util::client::legacy::connect::proxy::{SocksV4, SocksV5, Tunnel, TunnelError};
 
 #[cfg(not(miri))]
 #[tokio::test]
@@ -33,6 +33,42 @@ async fn test_tunnel_works() {
         io.write_all(b"HTTP/1.1 200 OK\r\n\r\n")
             .await
             .expect("write 1");
+    });
+
+    t1.await.expect("task 1");
+    t2.await.expect("task 2");
+}
+
+#[cfg(not(miri))]
+#[tokio::test]
+async fn test_tunnel_proxy_auth_required() {
+    let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = tcp.local_addr().expect("local_addr");
+
+    let proxy_dst = format!("http://{addr}").parse().expect("uri");
+    let mut connector = Tunnel::new(proxy_dst, HttpConnector::new());
+    let t1 = tokio::spawn(async move {
+        let err: TunnelError = connector
+            .call("https://hyper.rs".parse().unwrap())
+            .await
+            .expect_err("tunnel should fail");
+        assert_eq!(
+            err.status(),
+            Some(http::StatusCode::PROXY_AUTHENTICATION_REQUIRED)
+        );
+        assert_eq!(err.proxy_authenticate().collect::<Vec<_>>(), ["Negotiate"]);
+    });
+
+    let t2 = tokio::spawn(async move {
+        let (mut io, _) = tcp.accept().await.expect("accept");
+        let mut buf = [0u8; 64];
+        let n = io.read(&mut buf).await.expect("read 1");
+        assert!(buf[..n].starts_with(b"CONNECT hyper.rs:443 "));
+        io.write_all(
+            b"HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Negotiate\r\n\r\n",
+        )
+        .await
+        .expect("write 1");
     });
 
     t1.await.expect("task 1");
