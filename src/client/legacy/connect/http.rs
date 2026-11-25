@@ -842,9 +842,11 @@ fn bind_local_address(
 ) -> io::Result<()> {
     match (*dst_addr, local_addr_ipv4, local_addr_ipv6) {
         (SocketAddr::V4(_), Some(addr), _) => {
+            set_bind_address_no_port(socket);
             socket.bind(&SocketAddr::new((*addr).into(), 0).into())?;
         }
         (SocketAddr::V6(_), _, Some(addr)) => {
+            set_bind_address_no_port(socket);
             socket.bind(&SocketAddr::new((*addr).into(), 0).into())?;
         }
         _ => {
@@ -861,6 +863,33 @@ fn bind_local_address(
 
     Ok(())
 }
+
+// Let the kernel pick the source port at connect() instead of bind(), so a
+// bound local address can reuse ports across different destinations.
+#[cfg(any(target_os = "android", target_os = "linux"))]
+fn set_bind_address_no_port(socket: &socket2::Socket) {
+    use std::os::fd::AsRawFd;
+
+    let enable: libc::c_int = 1;
+    let ret = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::IPPROTO_IP,
+            libc::IP_BIND_ADDRESS_NO_PORT,
+            &enable as *const libc::c_int as *const libc::c_void,
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    };
+    if ret != 0 {
+        warn!(
+            "tcp set IP_BIND_ADDRESS_NO_PORT error: {}",
+            io::Error::last_os_error()
+        );
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
+fn set_bind_address_no_port(_socket: &socket2::Socket) {}
 
 fn connect(
     addr: &SocketAddr,
@@ -1160,6 +1189,47 @@ mod tests {
         if let Some(ip) = bind_ip_v6 {
             assert_client_ip(format!("http://[::1]:{port}"), server6, ip.into()).await;
         }
+    }
+
+    #[cfg(any(target_os = "android", target_os = "linux"))]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn local_address_sets_bind_address_no_port() {
+        use std::os::fd::AsRawFd;
+
+        async fn bind_address_no_port(local_address: Option<std::net::IpAddr>) -> libc::c_int {
+            let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = server.local_addr().unwrap().port();
+
+            let mut connector = HttpConnector::new();
+            connector.set_local_address(local_address);
+            let io = connect(
+                connector,
+                format!("http://127.0.0.1:{port}").parse().unwrap(),
+            )
+            .await
+            .unwrap();
+
+            let mut value: libc::c_int = -1;
+            let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+            let ret = unsafe {
+                libc::getsockopt(
+                    io.inner().as_raw_fd(),
+                    libc::IPPROTO_IP,
+                    libc::IP_BIND_ADDRESS_NO_PORT,
+                    &mut value as *mut libc::c_int as *mut libc::c_void,
+                    &mut len,
+                )
+            };
+            assert_eq!(ret, 0);
+            value
+        }
+
+        assert_eq!(
+            bind_address_no_port(Some(std::net::Ipv4Addr::LOCALHOST.into())).await,
+            1
+        );
+        assert_eq!(bind_address_no_port(None).await, 0);
     }
 
     #[tokio::test]
