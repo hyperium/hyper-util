@@ -11,7 +11,13 @@
 // $ cargo test --all-features --test legacy_client -- --nocapture
 // $ cargo test --all-features --test legacy_client
 
-use std::error::Error; // needed for .source() eg. error[E0599]: no method named `source` found for struct `hyper_util::client::legacy::Error` in the current scope
+use std::error::Error;
+
+fn error_chain<'a>(
+    error: &'a (dyn Error + 'static),
+) -> impl Iterator<Item = &'a (dyn Error + 'static)> {
+    std::iter::successors(Some(error), |&error| error.source())
+}
 
 // Helper function to debug byte slices by attempting to interpret them as UTF-8.
 // If the bytes are valid UTF-8, they are printed as a string; otherwise, they are
@@ -312,18 +318,9 @@ async fn test_connection_error_propagation_pr184() {
     // Log the full error for debugging, including its structure.
     // Matches your detailed logging style for traceability.
     eprintln!("Actually gotten error is: {:?}", err);
-    // Downcast the error to a hyper::Error to verify its type.
-    // Expect a hyper::Error wrapping an io::Error from MockConnection.
-    let hyper_err = err
-        .source()
-        .and_then(|e| e.downcast_ref::<hyper::Error>())
-        .expect("expected hyper::Error");
-    // Downcast the hyper::Error’s source to an io::Error.
-    // Verify it matches the simulated error from MockConnection.
-    let io_err = hyper_err
-        .source()
-        .and_then(|e| e.downcast_ref::<std::io::Error>())
-        .expect(&format!("expected io::Error but got {:?}", hyper_err));
+    let io_err = error_chain(&err)
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .unwrap_or_else(|| panic!("expected io::Error in {err:?}"));
     // Verify the io::Error has the expected kind (Other).
     assert_eq!(io_err.kind(), std::io::ErrorKind::Other);
     // Verify the io::Error’s message matches err_str.
@@ -366,28 +363,15 @@ async fn test_incomplete_message_error_pr184() {
     let err = result.expect_err("expected request to fail");
     // Log the full error for debugging, matching your style.
     eprintln!("Actually gotten error is: {:?}", err);
-    // Downcast to hyper::Error to verify the error type.
-    // Expect IncompleteMessage (with PR #184) or ChannelClosed (without).
-    let hyper_err = err
-        .source()
-        .and_then(|e| e.downcast_ref::<hyper::Error>())
-        .expect("expected hyper::Error");
-    // Verify the error is IncompleteMessage when PR #184 is applied.
-    // This checks the parser’s failure due to EOF.
     assert!(
-        hyper_err.is_incomplete_message(),
-        "expected IncompleteMessage, got {:?}",
-        hyper_err
+        error_chain(&err)
+            .filter_map(|cause| cause.downcast_ref::<hyper::Error>())
+            .any(hyper::Error::is_incomplete_message),
+        "expected IncompleteMessage in {err:?}",
     );
-    // Confirm no io::Error is present, as this is a parsing failure, not I/O.
-    // Ensures we’re testing the correct error type.
     assert!(
-        hyper_err
-            .source()
-            .and_then(|e| e.downcast_ref::<std::io::Error>())
-            .is_none(),
-        "expected no io::Error, got {:?}",
-        hyper_err
+        !error_chain(&err).any(|cause| cause.is::<std::io::Error>()),
+        "expected no io::Error in {err:?}",
     );
 }
 

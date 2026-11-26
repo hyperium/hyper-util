@@ -13,6 +13,8 @@ use std::{
 pub(crate) struct Rewind<T> {
     pub(crate) pre: Option<Bytes>,
     pub(crate) inner: T,
+    #[cfg(all(feature = "http1", feature = "http2"))]
+    pub(crate) has_written: bool,
 }
 
 impl<T> Rewind<T> {
@@ -21,6 +23,8 @@ impl<T> Rewind<T> {
         Rewind {
             pre: Some(buf),
             inner: io,
+            #[cfg(all(feature = "http1", feature = "http2"))]
+            has_written: false,
         }
     }
 }
@@ -61,6 +65,10 @@ where
         cx: &mut task::Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
+        #[cfg(all(feature = "http1", feature = "http2"))]
+        {
+            self.has_written = true;
+        }
         Pin::new(&mut self.inner).poll_write(cx, buf)
     }
 
@@ -69,6 +77,10 @@ where
         cx: &mut task::Context<'_>,
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
+        #[cfg(all(feature = "http1", feature = "http2"))]
+        {
+            self.has_written = true;
+        }
         Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
     }
 
